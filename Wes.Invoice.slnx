@@ -1,0 +1,6 @@
+<Solution>
+
+  <Project Path="Wes.Invoice.Ocr/Wes.Invoice.Ocr.csproj" />
+  <Project Path="Wes.Invoice.Test/Wes.Invoice.Test.csproj" />
+
+</Solution>

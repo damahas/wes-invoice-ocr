@@ -1,0 +1,52 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <RootNamespace>Wes.Invoice.Ocr</RootNamespace>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+  <!--
+    NuGet 类库打包配置（dotnet pack -c Release 生成 .nupkg）：
+    - 依赖（OnnxRuntime.GPU / ImageSharp / PdfPig / ZXing）通过 PackageReference 自动传递，
+      nupkg 内不包含依赖本体，消费方安装时自动解析下载
+    - 模型文件（models/*.onnx/*.txt）不打进包：体积大（约 25MB）且随业务/模型迭代变化，
+      由消费方自行提供目录，构造 PaddleOcrEngine(modelDir, ...) 时传入路径
+    - License / RepositoryUrl / README 打包按需取消注释并填写
+  -->
+  <PropertyGroup>
+    <PackageId>Wes.Invoice.Ocr</PackageId>
+    <Version>1.0.0</Version>
+    <Authors>WES</Authors>
+    <Description>发票 OCR 识别与二维码交叉校验类库（PaddleOCR v6 ONNX + OnnxRuntime，CUDA 自动探测回退 CPU）</Description>
+    <PackageTags>ocr;invoice;paddleocr;onnxruntime;发票;识别</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <!-- <RepositoryUrl>https://your-repo-url</RepositoryUrl> -->
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Include="..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <!--
+    依赖说明：
+    - Microsoft.ML.OnnxRuntime.GPU：PaddleOCR 推理（含 CUDA EP；无 N 卡/缺 CUDA 环境时自动回退 CPU EP，
+      体积比 CPU 包大 ~150MB，但同一包同时覆盖 GPU/CPU 场景，无需运行时切换包）
+    - SixLabors.ImageSharp：图像解码/预处理
+    - PdfPig：PDF 文本提取
+    - 其余（CTC 解码、几何、后处理、票据解析）全部纯 BCL 实现
+  -->
+  <ItemGroup>
+    <!-- netstandard2.0 无 System.Range/Index（`..`/`^` 语法需要），System.Memory 提供 -->
+    <PackageReference Include="System.Memory" Version="4.5.5" />
+    <PackageReference Include="Microsoft.ML.OnnxRuntime.GPU" Version="1.29.0" />
+    <!-- 固定 2.x：Apache-2.0 无营收门槛；v3+ 为 Split License（闭源商用营收>100万美元需付费），且 3.1.5 带 high 漏洞。勿升。 -->
+    <PackageReference Include="SixLabors.ImageSharp" Version="2.1.13" />
+    <PackageReference Include="PdfPig" Version="0.1.9" />
+    <!-- 二维码解码（发票交叉校验），纯托管无 native 依赖 -->
+    <PackageReference Include="ZXing.Net" Version="0.16.9" />
+  </ItemGroup>
+
+</Project>

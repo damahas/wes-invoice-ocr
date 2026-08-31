@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>Wes.Invoice.Test</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Wes.Invoice.Ocr\Wes.Invoice.Ocr.csproj" />
+  </ItemGroup>
+
+  <!-- 测试图片目录：随构建复制到输出目录，冒烟从“运行目录/Assets/”读取，避免硬编码绝对路径 -->
+  <ItemGroup>
+    <None Include="Assets\**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!-- 真实模型：随构建从仓库根 models/ 复制到“运行目录/models/”，冒烟缺省模型目录时直接使用；
+       .gitignore 已排除模型文件（不入库），未放置模型时 glob 为空、构建不受影响 -->
+  <ItemGroup>
+    <None Include="..\models\*.onnx" Link="models\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\models\*.txt" Link="models\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

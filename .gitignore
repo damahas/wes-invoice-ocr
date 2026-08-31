@@ -1,0 +1,49 @@
+# .NET build output
+bin/
+obj/
+*.user
+*.suo
+.vs/
+
+# Test results / coverage
+TestResults/
+*.coverage
+*.coveragexml
+
+# Rider / VS Code
+.idea/
+.vscode/
+
+# NuGet
+*.nupkg
+.nuget/
+
+# Logs
+*.log
+logs/
+
+# 冒烟测试图片（真实票据含税号/账号等敏感信息，勿提交；目录说明 Assets/README.md 保留）
+Wes.Invoice.Test/Assets/*.png
+Wes.Invoice.Test/Assets/*.jpg
+Wes.Invoice.Test/Assets/*.jpeg
+Wes.Invoice.Test/Assets/*.bmp
+Wes.Invoice.Test/Assets/*.webp
+Wes.Invoice.Test/Assets/*.tif
+Wes.Invoice.Test/Assets/*.tiff
+Wes.Invoice.Test/Assets/*.pdf
+
+# OS / editor
+.DS_Store
+Thumbs.db
+
+# Local models & downloaded assets (do not commit)
+# models/**/det.onnx
+# models/**/rec.onnx
+# models/**/cls.onnx
+# models/**/*.txt
+# models/**/*.json
+
+# Runtime native libs (come from NuGet packages)
+onnxruntime*.dll
+onnxruntime*.so
+onnxruntime*.dylib
