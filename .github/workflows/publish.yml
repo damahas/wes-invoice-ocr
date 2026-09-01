@@ -1,0 +1,68 @@
+name: Publish NuGet
+
+# 触发：推送形如 v1.2.3 的 tag 时，构建 → 单测 → 打包 → 推送 NuGet.org → 创建 GitHub Release。
+# 版本号取自 tag（去掉前缀 v），覆盖 csproj 里的 <Version>，故发版无需改代码。
+
+on:
+  push:
+    # tags 过滤是 glob 模式而非正则，无法表达 v[0-9]+.[0-9]+.[0-9]+；
+    # 故此处宽匹配 v*，再由 "校验 tag 格式" 步骤做严格校验并给出明确报错。
+    tags:
+      - 'v*'
+
+# 创建 GitHub Release 需要写权限；GITHUB_TOKEN 由 Actions 自动注入
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      # 格式非法时尽早失败，避免把错误版本号推到 NuGet（NuGet 同版本不可覆盖）
+      - name: 校验 tag 格式
+        run: |
+          # 正则存变量再引用：避免 =~ 右侧直接写正则时的引号 / 转义歧义
+          RE='^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'
+          if ! [[ "$GITHUB_REF_NAME" =~ $RE ]]; then
+            echo "::error::tag 格式非法：$GITHUB_REF_NAME，应为 v1.2.3 或 v1.2.3-beta.1"
+            exit 1
+          fi
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "tag=$GITHUB_REF_NAME -> 包版本 $VERSION"
+
+      - name: 安装 .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          # 测试项目目标框架 net10.0，且 .slnx 解决方案格式需 9.0.200+ SDK
+          dotnet-version: 10.0.x
+
+      - name: 还原依赖
+        run: dotnet restore Wes.Invoice.slnx
+
+      - name: 构建（Release）
+        run: dotnet build Wes.Invoice.slnx -c Release --no-restore
+
+      # 16 个解析器/类型判定/二维码校验单测，零依赖
+      - name: 单元测试
+        run: dotnet run --project Wes.Invoice.Test -c Release --no-build
+
+      # 不复用上面的构建产物：pack 需按目标版本重新编译，
+      # 否则 nupkg 内 DLL 的 AssemblyVersion 会与包版本不一致。
+      - name: 打包
+        run: dotnet pack Wes.Invoice.Ocr -c Release -o artifacts -p:Version=$VERSION
+
+      - name: 推送到 NuGet.org
+        run: >
+          dotnet nuget push "artifacts/*.nupkg"
+          --source https://api.nuget.org/v3/index.json
+          --api-key ${{ secrets.NUGET_API_KEY }}
+          --skip-duplicate
+
+      - name: 创建 GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "$GITHUB_REF_NAME" artifacts/*.nupkg --generate-notes

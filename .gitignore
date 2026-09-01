@@ -18,6 +18,9 @@ TestResults/
 *.nupkg
 .nuget/
 
+# 本地打包产物目录（dotnet pack -o artifacts；CI 在临时目录打包，不入库）
+artifacts/
+
 # Logs
 *.log
 logs/

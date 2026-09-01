@@ -132,8 +132,8 @@ dotnet run --project Wes.Invoice.Test -- smoke [模型目录] [图片路径] [--
 # 全量构建
 dotnet build Wes.Invoice.slnx -c Release
 
-# 打包 NuGet 包（输出到 ../artifacts）
-dotnet pack Wes.Invoice.Ocr -c Release -o ..\artifacts
+# 打包 NuGet 包（输出到 artifacts/，已被 .gitignore 忽略）
+dotnet pack Wes.Invoice.Ocr -c Release -o artifacts
 
 # 依赖漏洞扫描（CI 建议加，发现漏洞时退出码非 0）
 dotnet list package --vulnerable --include-transitive
