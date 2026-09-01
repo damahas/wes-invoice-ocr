@@ -2,6 +2,17 @@ name: Publish NuGet
 
 # 触发：推送形如 v1.2.3 的 tag 时，构建 → 单测 → 打包 → 推送 NuGet.org → 创建 GitHub Release。
 # 版本号取自 tag（去掉前缀 v），覆盖 csproj 里的 <Version>，故发版无需改代码。
+#
+# 认证：NuGet Trusted Publishing（OIDC），无需 API Key。首次使用需在 nuget.org 配置信任策略：
+#   登录 nuget.org → 右上角用户名 → 受信任的发布（Trusted Publishing）→ 新建策略
+#   Policy Owner    : Wesden
+#   Repository Owner: damahas
+#   Repository      : wes-invoice-ocr
+#   Workflow File   : publish.yml      （只填文件名，不含 .github/workflows/ 路径）
+#   Environment     : 留空              （本工作流不使用 GitHub Actions environment）
+# 策略创建后处于“待完全激活”状态，7 天内完成首次发布即永久生效。
+# 若账户无“受信任的发布”选项（灰度中），可回退 API Key：删掉登录步骤，
+# 把 --api-key 换成 ${{ secrets.NUGET_API_KEY }}，并在仓库 Settings→Secrets 中配置。
 
 on:
   push:
@@ -10,9 +21,11 @@ on:
     tags:
       - 'v*'
 
-# 创建 GitHub Release 需要写权限；GITHUB_TOKEN 由 Actions 自动注入
+# contents: write —— 创建 GitHub Release；GITHUB_TOKEN 由 Actions 自动注入
+# id-token: write —— 申请 GitHub OIDC 令牌，供 NuGet Trusted Publishing 换取临时密钥（无此权限登录步骤必失败）
 permissions:
   contents: write
+  id-token: write
 
 jobs:
   publish:
@@ -55,11 +68,21 @@ jobs:
       - name: 打包
         run: dotnet pack Wes.Invoice.Ocr -c Release -o artifacts -p:Version=$VERSION
 
+      # NuGet Trusted Publishing：用 GitHub OIDC 令牌换取临时 API 密钥（有效期 1 小时），
+      # 无需在仓库中保存任何长期凭证。需在 nuget.org 配置对应的信任策略（见本文件头注释）。
+      # user 填 NuGet 用户名（profile name，非邮箱）；这是公开信息，故直接写死而非存 secret。
+      - name: NuGet 登录（OIDC → 临时密钥）
+        uses: NuGet/login@v1
+        id: login
+        with:
+          user: Wesden
+
+      # 临时密钥仅 1 小时有效，故登录步骤须紧邻推送
       - name: 推送到 NuGet.org
         run: >
           dotnet nuget push "artifacts/*.nupkg"
           --source https://api.nuget.org/v3/index.json
-          --api-key ${{ secrets.NUGET_API_KEY }}
+          --api-key ${{ steps.login.outputs.NUGET_API_KEY }}
           --skip-duplicate
 
       - name: 创建 GitHub Release
