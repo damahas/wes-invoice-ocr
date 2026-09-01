@@ -23,7 +23,7 @@
     <Description>发票 OCR 识别与二维码交叉校验类库（PaddleOCR v6 ONNX + OnnxRuntime，CUDA 自动探测回退 CPU）</Description>
     <PackageTags>ocr;invoice;paddleocr;onnxruntime;发票;识别</PackageTags>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <!-- <RepositoryUrl>https://your-repo-url</RepositoryUrl> -->
+    <RepositoryUrl>https://github.com/damahas/wes-invoice-ocr</RepositoryUrl>
     <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
   <ItemGroup>
