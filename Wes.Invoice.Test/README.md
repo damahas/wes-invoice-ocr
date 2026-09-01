@@ -50,24 +50,19 @@ dotnet build Wes.Invoice.slnx -c Release
 .\Wes.Invoice.Test\bin\Release\net10.0\Wes.Invoice.Test.exe smoke
 ```
 
-## 图片读取优先级
+## 冒烟图片路径
 
-1. 命令行第二个位置参数 —— `smoke <模型目录> <图片路径>`
-2. 环境变量 `INVOICE_OCR_SMOKE_IMAGE`
-3. 运行目录下的 `Assets/test_invoice.png`
+优先级：命令行第二个位置参数 &gt; 运行目录下 `Assets/test_invoice.png`。
 
-## 常用环境变量（完整列表见根目录 README）
+```bash
+# 显式指定图片
+dotnet run --project Wes.Invoice.Test -- smoke models D:/samples/another_invoice.jpg
 
-| 变量 | 默认 | 说明 |
-|------|------|------|
-| `INVOICE_OCR_SMOKE_IMAGE` | 无 | 冒烟图片路径（优先级高于 Assets 默认图）|
-| `INVOICE_OCR_ROI` | `0` | `1` 开启 ROI 排序裁剪 |
-| `INVOICE_OCR_REC_BATCH` | `0` | `1` 强制批量 rec（对照用，实测更慢）|
-
-```powershell
-$env:INVOICE_OCR_SMOKE_IMAGE = "D:/samples/another_invoice.jpg"
+# 或把图片放到 Wes.Invoice.Test/Assets/test_invoice.png，直接跑
 dotnet run --project Wes.Invoice.Test -- smoke
 ```
+
+全项目行为均由显式入参决定：类库看 `PaddleOcrConfig`，测试看命令行参数。
 
 ## IDE 启动配置（launchSettings.json）
 
@@ -75,9 +70,7 @@ dotnet run --project Wes.Invoice.Test -- smoke
 |---------|------|
 | `UnitTest` | 单测 |
 | `Smoke` | 冒烟（默认参数）|
-| `Smoke-Debug` | 冒烟 + 诊断 |
-| `Smoke-NoBatch` | 强制逐行 rec |
-| `Smoke-NoRoi` | 关闭 ROI |
+| `Smoke-Debug` | 冒烟 + 诊断（含逐行/批量 rec 耗时对比）|
 
 ## 目录结构
 
@@ -94,6 +87,8 @@ Wes.Invoice.Test/
 ## 敏感数据注意
 
 **不要提交含真实信息的票据图片。** 发票含企业税号、银行账号、人名、车牌等敏感字段，
-`Assets/` 下的图片默认已被 `.gitignore` 排除，不会入库；模型文件（仓库根 `models/`）同样不入库。
+`Assets/` 下的图片默认已被 `.gitignore` 排除，不会入库。
+
+模型文件（仓库根 `models/`）**已入库**，不含敏感信息，clone 后即可直接跑冒烟。
 
 如需团队共享测试集，请先脱敏（涂改或替换为虚构数据）。

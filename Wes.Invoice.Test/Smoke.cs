@@ -35,8 +35,8 @@ internal static class Smoke
         if (!File.Exists(imagePath))
         {
             Console.Error.WriteLine($"图片不存在: {imagePath}");
-            Console.Error.WriteLine("请传入图片路径，或设置环境变量 INVOICE_OCR_SMOKE_IMAGE；");
-            Console.Error.WriteLine($"也可将图片放置为运行目录下的 {Path.Combine("Assets", DefaultImageName)}。");
+            Console.Error.WriteLine("请传入图片路径，");
+            Console.Error.WriteLine($"或将图片放置为运行目录下的 {Path.Combine("Assets", DefaultImageName)}。");
             return 1;
         }
 
@@ -48,10 +48,10 @@ internal static class Smoke
                 return 0;
             }
 
-            using var engine = new PaddleOcrEngine(modelDir, new PaddleOcrConfig { Ep = EpPreference.Auto });
+            using var engine = new PaddleOcrEngine(modelDir, new PaddleOcrConfig { Ep = EpPreference.Cuda });
             var svc = new InvoiceOcrService(engine, qrDecoder: new Wes.Invoice.Ocr.Qr.ZxingQrDecoder());
 
-            Console.WriteLine($"引擎: {svc.EngineName}");
+            Console.WriteLine($"引擎: {svc.EngineName}  生效 EP: {engine.EpName}");
             var bytes = File.ReadAllBytes(imagePath);
 
             var sw = Stopwatch.StartNew();
@@ -85,21 +85,17 @@ internal static class Smoke
     const string DefaultImageName = "test_invoice.png";
 
     /// <summary>
-    /// 图片路径解析：命令行参数 &gt; 环境变量 INVOICE_OCR_SMOKE_IMAGE &gt; 运行目录下 Assets/test_invoice.png。
+    /// 图片路径解析：命令行参数 &gt; 运行目录下 Assets/test_invoice.png。
+    /// 行为完全由命令行入参决定，避免隐式全局状态。
     /// 用运行目录（AppContext.BaseDirectory）拼接，避免硬编码绝对路径。
     /// </summary>
     static string ResolveImagePath(string[] args)
     {
         // 第一个非选项参数即图片路径（--debug 等选项可出现在任意位置，不能按固定下标取）
         var positional = args.Where(a => !a.StartsWith("--", StringComparison.Ordinal)).ToList();
-        if (positional.Count > 1)
-            return positional[1];
-
-        var env = Environment.GetEnvironmentVariable("INVOICE_OCR_SMOKE_IMAGE");
-        if (!string.IsNullOrWhiteSpace(env))
-            return env;
-
-        return Path.Combine(AppContext.BaseDirectory, "Assets", DefaultImageName);
+        return positional.Count > 1
+            ? positional[1]
+            : Path.Combine(AppContext.BaseDirectory, "Assets", DefaultImageName);
     }
 
     static void DebugRun(string modelDir, string imagePath)
@@ -190,34 +186,33 @@ internal static class Smoke
         // EP 对比：GPU(DirectML) vs CPU，判断 GPU 是否可用及提速幅度
         ProfileEp(modelDir, img);
 
-        // 批量 vs 逐行交替测量：避免系统负载波动把结论带偏（两种模式各跑 3 次）
+        // 批量 vs 逐行交替测量：避免系统负载波动把结论带偏（两种模式各跑 3 次）。
+        // 两种模式由 PaddleOcrConfig.RecBatch 决定（构造时固定），故各建一个引擎实例。
         var batch = new List<long>();
         var single = new List<long>();
 
-        using var engineSingle = new PaddleOcrEngine(modelDir, new PaddleOcrConfig { Ep = EpPreference.Cpu });
+        using var engineSingle = new PaddleOcrEngine(modelDir, new PaddleOcrConfig { Ep = EpPreference.Cpu, RecBatch = false });
+        using var engineBatch = new PaddleOcrEngine(modelDir, new PaddleOcrConfig { Ep = EpPreference.Cpu, RecBatch = true });
         engineSingle.RecognizeImage(img); // 预热
+        engineBatch.RecognizeImage(img);  // 预热
 
         for (int i = 0; i < 3; i++)
         {
-            // useBatch 在每次 RecognizeImage 时读环境变量，故在测量前设置即可生效
-            Environment.SetEnvironmentVariable("INVOICE_OCR_REC_BATCH", "0");
             var swS = Stopwatch.StartNew();
             engineSingle.RecognizeImage(img);
             swS.Stop();
             single.Add(swS.ElapsedMilliseconds);
 
-            Environment.SetEnvironmentVariable("INVOICE_OCR_REC_BATCH", "1");
             var swB = Stopwatch.StartNew();
-            engine.RecognizeImage(img);
+            engineBatch.RecognizeImage(img);
             swB.Stop();
             batch.Add(swB.ElapsedMilliseconds);
         }
-        Environment.SetEnvironmentVariable("INVOICE_OCR_REC_BATCH", null);
 
         var medS = Median(single);
         var medB = Median(batch);
-        Console.WriteLine($"  逐行 rec (BATCH=0): {string.Join(", ", single)} ms  中位数 {medS} ms");
-        Console.WriteLine($"  批量 rec (BATCH=1): {string.Join(", ", batch)} ms  中位数 {medB} ms");
+        Console.WriteLine($"  逐行 rec (RecBatch=false): {string.Join(", ", single)} ms  中位数 {medS} ms");
+        Console.WriteLine($"  批量 rec (RecBatch=true):  {string.Join(", ", batch)} ms  中位数 {medB} ms");
         // 注意用浮点比较：整数除法会把 28636/35243 直接截断为 0
         var ratio = medS > 0 ? (double)medB / medS : 0;
         var verdict = ratio > 1.1 ? "批量反而更慢" : ratio < 0.9 ? "批量有效提速" : "基本持平（差异在噪声内）";
@@ -252,8 +247,9 @@ internal static class Smoke
             g.Add(sw.ElapsedMilliseconds);
         }
         var gMed = Median(g);
+        Console.WriteLine($"  Ep=Auto 实际生效 EP: {gpu.EpName}（CUDA 表示已走 N 卡，CPU 表示已回退）");
         Console.WriteLine($"  Ep=Auto 耗时: {string.Join(", ", g)} ms  中位数 {gMed} ms");
-        Console.WriteLine("  （对比上方 CPU 分段计时的中位数值；实际生效的 EP 见上方引擎加载日志）");
+        Console.WriteLine("  （对比上方 CPU 分段计时的中位数值）");
     }
 
     private sealed class ConsoleLogger : Wes.Invoice.Ocr.Paddle.ILogger

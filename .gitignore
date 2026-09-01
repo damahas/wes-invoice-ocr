@@ -36,7 +36,8 @@ Wes.Invoice.Test/Assets/*.pdf
 .DS_Store
 Thumbs.db
 
-# Local models & downloaded assets (do not commit)
+# 模型文件已随仓库提交（约 25MB，见 models/README.md），故不在此排除。
+# 若日后改回“模型不入库”，取消下面注释即可：
 # models/**/det.onnx
 # models/**/rec.onnx
 # models/**/cls.onnx

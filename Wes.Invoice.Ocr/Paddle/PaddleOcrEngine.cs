@@ -26,6 +26,9 @@ public sealed class PaddleOcrEngine : IOcrEngine, IDisposable
     private readonly List<InferenceSession> _clsPool;
     private readonly List<string> _dict;
 
+    private readonly bool _roiEnabled;
+    private readonly bool _useBatch;
+
     private readonly bool _detDynamic;
     private readonly int _detH, _detW, _detLimit;
     private readonly bool _recDynamicW;
@@ -39,6 +42,13 @@ public sealed class PaddleOcrEngine : IOcrEngine, IDisposable
     private readonly string _detInput, _recInput, _clsInput;
 
     public string Name => "paddleocr-onnx";
+
+    /// <summary>
+    /// 构造时实际生效的执行提供方（"CUDA" / "DirectML" / "CPU"）。
+    /// 与请求的 <see cref="PaddleOcrConfig.Ep"/> 可能不同（CUDA 不可用时会静默回退 CPU），
+    /// 用于确认 GPU 是否真的启用。
+    /// </summary>
+    public string EpName { get; }
 
     public PaddleOcrEngine(string modelDir, PaddleOcrConfig? config = null)
         : this(modelDir, config ?? new PaddleOcrConfig(), null) { }
@@ -67,8 +77,12 @@ public sealed class PaddleOcrEngine : IOcrEngine, IDisposable
                 $"PaddleOCR 模型文件缺失。模型目录: {dir}（需要 det.onnx / rec.onnx{(File.Exists(clsPath) ? "，cls.onnx 可选" : "")}{(File.Exists(detPath) ? "" : "，det.onnx 缺失")}）",
                 OcrErrorKind.EngineNotConfigured);
 
+        // ROI / 批量：由配置在构造时确定并缓存为字段，避免每次 RecognizeImage 重复判断。
+        // 全部行为只取决于传入的配置，支持同进程内多实例差异化。
+        _roiEnabled = cfg.RoiEnabled;
+
         // 会话线程配置：rec 会话池 N 个 × 每会话 intra 线程 = max(1, 核数/N)
-        var recThreads = EnvInt("INVOICE_OCR_REC_THREADS", cfg.RecThreads, 1, 16);
+        var recThreads = Math.Max(Math.Min(cfg.RecThreads, 16), 1);
         var cores = Math.Max(Environment.ProcessorCount, 1);
         var perSession = Math.Max(cores / recThreads, 1);
 
@@ -108,12 +122,18 @@ public sealed class PaddleOcrEngine : IOcrEngine, IDisposable
         _clsH = clsH ?? DefaultClsH;
         _clsW = clsW ?? DefaultClsW;
 
+        // 批量还需模型支持（batch 维度动态），静态 batch 模型即使配置了也不会启用
+        _useBatch = _recBatch && cfg.RecBatch;
+
         _detInput = _det.InputMetadata.Keys.First();
         _recInput = _recPool[0].InputMetadata.Keys.First();
         _clsInput = _clsPool.Count > 0 ? _clsPool[0].InputMetadata.Keys.First() : "";
 
+        // 会话全部创建完毕后读取：LastEpName 是静态值，构造串行故此处即本引擎真实生效的 EP
+        EpName = OnnxSessionFactory.LastEpName;
+
         logger?.Info(
-            $"PaddleOcrEngine 加载完成: EP={OnnxSessionFactory.LastEpName}(请求 {cfg.Ep}), det={( _detDynamic ? $"动态(长边≤{_detLimit})" : $"固定{_detH}x{_detW}" )}, " +
+            $"PaddleOcrEngine 加载完成: EP={EpName}(请求 {cfg.Ep}), det={( _detDynamic ? $"动态(长边≤{_detLimit})" : $"固定{_detH}x{_detW}" )}, " +
             $"rec={( _recDynamicW ? $"{_recH}x动态(宽≤{_recMaxW}){( _recBatch ? ", 支持批量" : "" )}" : $"{_recH}x{_recW}" )}, " +
             $"cls={(_clsPool.Count > 0 ? "启用" : "未启用")}, 词典 {_dict.Count} 字符");
     }
@@ -125,11 +145,8 @@ public sealed class PaddleOcrEngine : IOcrEngine, IDisposable
         if (ih == 0 || iw == 0)
             return [];
 
-        // ROI 预过滤：横版发票（宽高比 > 1.3）只识别关键字段区域。
-        // 默认关闭：ROI 区域按版式硬编码，版式不匹配时会静默丢字段
-        // （实测将销售方税号误填为购买方税号，比漏字段更危险）。
-        // 如需临时开启对照，设 INVOICE_OCR_ROI=1。
-        var roiEnabled = EnvBool("INVOICE_OCR_ROI", false) && iw / (float)ih > 1.3f;
+        // ROI 预过滤：横版发票（宽高比 > 1.3）只识别关键字段区域。由 PaddleOcrConfig.RoiEnabled 控制。
+        var roiEnabled = _roiEnabled && iw / (float)ih > 1.3f;
 
         // 分段计时：仅在传入 logger 时启用（生产传 null，零开销）
         var prof = _logger is null ? null : System.Diagnostics.Stopwatch.StartNew();
@@ -224,13 +241,8 @@ public sealed class PaddleOcrEngine : IOcrEngine, IDisposable
 
         var clsMs = prof is null ? 0 : prof.ElapsedMilliseconds - detMs;
 
-        // 4. rec：支持批量时按宽度分桶并行，否则逐行。
-        // 默认关闭批量：实测批量更慢（稳定态 23.3s vs 逐行 19.6s，慢约 19%）。
-        // 原因是桶内按最宽行 padding（宽度 5~730px 差异大），padding 浪费的算力
-        // 超过批处理收益，且 SVTR 为 O(T²)，padded 长度直接放大耗时。
-        // 如需对照，设 INVOICE_OCR_REC_BATCH=1。
-        var useBatch = _recBatch && EnvBool("INVOICE_OCR_REC_BATCH", false);
-        var results = useBatch
+        // 4. rec：批量（按宽度分桶、多行一次推理）或逐行，由 PaddleOcrConfig.RecBatch 决定
+        var results = _useBatch
             ? RecognizeTextsBatch(cropList.Select(c => c.Img).ToList())
             : cropList.Select(c => RecognizeText(c.Img)).ToList();
 
@@ -241,7 +253,7 @@ public sealed class PaddleOcrEngine : IOcrEngine, IDisposable
             _logger!.Info(
                 $"[分段] 总计 {total} ms | det {detMs} ms ({100.0 * detMs / total:F0}%) | " +
                 $"cls {clsMs} ms ({100.0 * clsMs / total:F0}%) | rec {recMs} ms ({100.0 * recMs / total:F0}%) | " +
-                $"框数 {quads.Count} | 批量={useBatch}");
+                $"框数 {quads.Count} | 批量={_useBatch}");
         }
 
         // 组装 OcrBox（归一化坐标）
@@ -500,22 +512,6 @@ public sealed class PaddleOcrEngine : IOcrEngine, IDisposable
         for (int y = 0; y < h; y++)
             Array.Copy(src.Pixels, y * src.Width + x0, pixels, y * width, width);
         return new GrayImage(width, h, pixels);
-    }
-
-    private static bool EnvBool(string name, bool def)
-    {
-        var v = Environment.GetEnvironmentVariable(name);
-        if (string.IsNullOrEmpty(v))
-            return def;
-        return v.Trim() == "1" || v.Trim().Equals("true", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static int EnvInt(string name, int def, int min, int max)
-    {
-        var v = Environment.GetEnvironmentVariable(name);
-        if (string.IsNullOrEmpty(v))
-            return def;
-        return int.TryParse(v.Trim(), out var n) ? Math.Max(min, Math.Min(n, max)) : def;
     }
 
     public void Dispose()

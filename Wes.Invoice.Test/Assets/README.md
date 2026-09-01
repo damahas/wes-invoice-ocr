@@ -26,8 +26,7 @@ dotnet run --project Wes.Invoice.Test -- smoke models
 图片路径解析优先级：
 
 1. 命令行参数 —— `smoke <模型目录> <图片路径>`
-2. 环境变量 `INVOICE_OCR_SMOKE_IMAGE`
-3. 运行目录下 `Assets/test_invoice.png`
+2. 运行目录下 `Assets/test_invoice.png`
 
 如果你需要用自己合成的虚构票据图片，可在本地生成后按上述方式放置；**不要**用 git 强制加入（`git add -f`）的方式绕过 `.gitignore`。
 

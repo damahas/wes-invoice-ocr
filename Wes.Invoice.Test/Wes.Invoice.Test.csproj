@@ -18,8 +18,8 @@
     <None Include="Assets\**" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
-  <!-- 真实模型：随构建从仓库根 models/ 复制到“运行目录/models/”，冒烟缺省模型目录时直接使用；
-       .gitignore 已排除模型文件（不入库），未放置模型时 glob 为空、构建不受影响 -->
+  <!-- 真实模型：随构建从仓库根 models/ 复制到“运行目录/models/”，冒烟缺省模型目录时直接使用。
+       模型已随 git 仓库提交（约 25MB），clone 后无需额外下载即可跑通冒烟 -->
   <ItemGroup>
     <None Include="..\models\*.onnx" Link="models\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\models\*.txt" Link="models\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />

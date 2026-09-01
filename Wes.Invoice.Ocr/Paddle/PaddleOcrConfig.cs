@@ -35,6 +35,21 @@ public sealed record PaddleOcrConfig
     public int RecThreads { get; init; } = 4;
 
     /// <summary>
+    /// rec 批量推理（按文本行宽度分桶、多行一次推理）。
+    /// 默认 <c>false</c>：实测比逐行慢约 19%（桶内按最宽行 padding，宽度 5~730px 差异大，
+    /// padding 浪费的算力超过批处理收益，且 SVTR 为 O(T²)）。
+    /// 置 <c>true</c> 仅在模型 batch 维度动态时才真正生效。
+    /// </summary>
+    public bool RecBatch { get; init; }
+
+    /// <summary>
+    /// ROI 区域裁剪：横版发票（宽高比 &gt; 1.3）只识别关键字段区域，可提速。
+    /// 默认 <c>false</c>：ROI 按版式硬编码，版式不匹配时会静默丢字段
+    /// （实测将销售方税号误填为购买方税号，比漏字段更危险）。仅供调试定位。
+    /// </summary>
+    public bool RoiEnabled { get; init; }
+
+    /// <summary>
     /// 模型目录（需含 det.onnx / rec.onnx，可选 cls.onnx 与 ppocrv6_dict.txt）。
     /// 作为 <see cref="PaddleOcrEngine"/> 构造参数 modelDir 为空时的回退值；
     /// 两者皆空抛 <see cref="OcrErrorKind.EngineNotConfigured"/>。

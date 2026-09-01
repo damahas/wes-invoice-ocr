@@ -12,8 +12,9 @@
     NuGet 类库打包配置（dotnet pack -c Release 生成 .nupkg）：
     - 依赖（OnnxRuntime.GPU / ImageSharp / PdfPig / ZXing）通过 PackageReference 自动传递，
       nupkg 内不包含依赖本体，消费方安装时自动解析下载
-    - 模型文件（models/*.onnx/*.txt）不打进包：体积大（约 25MB）且随业务/模型迭代变化，
-      由消费方自行提供目录，构造 PaddleOcrEngine(modelDir, ...) 时传入路径
+    - 模型文件（models/*.onnx/*.txt）不打进包：体积大（约 25MB）且随模型迭代变化。
+      模型已随 git 仓库提交（消费方从仓库 models/ 取用或自备目录），
+      构造 PaddleOcrEngine(modelDir, ...) 时传入路径
     - License / RepositoryUrl / README 打包按需取消注释并填写
   -->
   <PropertyGroup>

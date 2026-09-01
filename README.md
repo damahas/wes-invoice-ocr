@@ -12,7 +12,7 @@
 - **纯标准库算法**：CTC 贪心解码、DB 后处理（flood fill / NMS / min-area-rect）、图像三角形滤波缩放、双线性旋转裁剪、几何校正等全部使用 BCL 实现，无额外依赖。
 - **推理仅必要三方包**：`Microsoft.ML.OnnxRuntime.GPU`（推理，含 CUDA EP；无 N 卡自动回退 CPU）、`SixLabors.ImageSharp` **2.1.x**（图像解码/预处理）、`PdfPig`（PDF 文本提取）、`ZXing.Net`（二维码解码）。
 - **二维码交叉校验**：与 OCR 主流程并行解码二维码（ROI 优先 + 全图降级），与发票号码/日期/金额交叉比对，对响应时间零影响；支持数电票查验 URL 参数解析。
-- **批量识别**：rec 阶段支持按文本行宽度分桶并行、多行一次推理；实测批量反而更慢 ~19%，故**默认关闭**（`INVOICE_OCR_REC_BATCH=1` 可开启对照）。
+- **批量识别**：rec 阶段支持按文本行宽度分桶并行、多行一次推理；实测批量反而更慢 ~19%，故**默认关闭**（`PaddleOcrConfig.RecBatch = true` 可开启对照）。
 - **可扩展解析器**：基于 `IInvoiceParser` 契约，新票据类型只需新增一个解析器并在 `ParserRegistry` 注册。
 - **解耦门面**：`InvoiceOcrService` 统一流水线（图片 / PDF / 纯文本 → 识别 → 类型判定 → 解析）。
 
@@ -28,7 +28,8 @@ dotnet add package Wes.Invoice.Ocr
 Install-Package Wes.Invoice.Ocr
 ```
 
-> **模型不打进 NuGet 包**：`det.onnx` / `rec.onnx` / `cls.onnx` 及词典体积约 25MB，且随模型迭代变化，请按下方[模型](#模型)章节自行准备目录，构造 `PaddleOcrEngine` 时传入。
+> **模型已随仓库提供**：仓库 `models/` 目录内含可直接运行的 ONNX 模型（约 25 MB），clone 后无需额外下载。
+> 但**模型不打进 NuGet 包**——NuGet 消费方请从本仓库 `models/` 取用，或自备模型目录，构造 `PaddleOcrEngine` 时传入路径。
 
 ## 快速开始
 
@@ -77,15 +78,23 @@ var invoice = svc.RecognizePdfBytes(File.ReadAllBytes("invoice.pdf"));
 
 ## 模型
 
-从 PaddleOCR 官方导出 `det.onnx` / `rec.onnx` / `cls.onnx`（可选）及字符字典，放入同一目录，例如：
+**已随仓库提交，开箱即用**。仓库 `models/` 目录内容：
 
 ```
 models/
-├─ det.onnx               # PP-OCRv4 det（动态 H/W，长边上限 960）
-├─ rec.onnx               # PP-OCRv6 rec（动态宽，上限 640）
-├─ cls.onnx               # 可选，方向分类
-└─ ppocrv6_dict.txt       # 中文词典（rec.onnx 内嵌字符集时非必需）
+├─ det.onnx               # 必需：PP-OCRv4 det（动态 H/W，长边上限 960），4.53 MB
+├─ rec.onnx               # 必需：PP-OCRv6 rec（动态宽，上限 640，内嵌字符集），20.25 MB
+├─ cls.onnx               # 可选：方向分类，存在即启用，0.56 MB
+└─ ppocrv6_dict.txt       # 中文词典（rec.onnx 内嵌字符集时非必需），0.07 MB
 ```
+
+合计约 25 MB。`PaddleOcrEngine` 按上述固定文件名在 `modelDir` 下查找，`det.onnx` / `rec.onnx` 缺失时抛
+`OcrErrorKind.EngineNotConfigured`；`cls.onnx` 缺失则静默跳过方向分类。
+
+替换模型：保持文件名不变直接覆盖即可（无需改代码）。从 PaddleOCR 官方 inference model 用
+[paddle2onnx](https://github.com/PaddlePaddle/Paddle2ONNX) 转换，详见 [`models/README.md`](models/README.md)。
+
+> **NuGet 消费方注意**：模型**不在** NuGet 包内（体积大且随模型迭代变化），请从本仓库 `models/` 取用或自备目录。
 
 `PaddleOcrConfig` 关键配置：
 
@@ -93,8 +102,12 @@ models/
 |------|--------|------|
 | `DetLimit` | 960 | det 输入长边上限 |
 | `RecMaxW` | 320 | rec 单段最大宽度（超长行自动滑窗切分） |
-| `RecThreads` | 4 | rec 会话池线程数（分桶并行，1~16） |
+| `RecThreads` | 4 | rec 会话池线程数（1~16），在构造时确定 |
+| `RecBatch` | `false` | rec 批量推理；实测比逐行慢 ~19%，仅用于对照排查（模型 batch 维度动态时才生效） |
+| `RoiEnabled` | `false` | ROI 区域裁剪（可调速，但版式不匹配时会静默错字段，仅供调试） |
 | `Ep` | `Auto` | 执行提供方：`Cpu` / `DirectML` / `Cuda` / `Auto`（Auto 仅尝试 N 卡 CUDA，失败回退 CPU，不考虑核显） |
+
+构造后配置即固定；同进程内需要不同行为请建多个引擎实例（如逐行/批量对照）。
 
 ## 环境要求
 
@@ -107,30 +120,14 @@ models/
   - `Ep=Auto`（或 `Cuda`）在无 CUDA 环境会先探测 `cublasLt64_13.dll` / `cudnn64_9.dll`，
     探测不到则跳过 CUDA EP，stderr 输出一条 `未检测到 CUDA 13 运行库...回退 CPU` 提示，自动使用 CPU EP
 
-## 环境变量（调试 / 对照）
-
-| 变量 | 默认 | 说明 |
-|------|------|------|
-| `INVOICE_OCR_REC_BATCH` | `0` | `1` 强制批量 rec（实测比逐行慢 ~19%，仅用于对照排查） |
-| `INVOICE_OCR_REC_THREADS` | `4` | rec 会话池线程数（1~16，覆盖 `PaddleOcrConfig.RecThreads`） |
-| `INVOICE_OCR_ROI` | `0` | `1` 开启 ROI 排序裁剪（默认关闭，避免静默错字段；调试定位阶段问题用） |
-| `INVOICE_OCR_SMOKE_IMAGE` | - | 冒烟测试图片路径（见[测试](#测试)） |
-
-示例：
-
-```powershell
-$env:INVOICE_OCR_REC_BATCH = "1"
-dotnet run --project Wes.Invoice.Test -- smoke models test_invoice.png
-```
-
 ## 测试
 
 ```bash
 # 解析器 / 类型判定单元测试（零依赖，退出码 0/1 可入 CI）
 dotnet run --project Wes.Invoice.Test
 
-# 端到端冒烟（--debug 打印 det 的 shape 与概率统计）
-dotnet run --project Wes.Invoice.Test -- smoke <模型目录> [图片路径] [--debug]
+# 端到端冒烟（模型目录省略时默认取运行目录下 models/；--debug 打印 det 的 shape 与概率统计）
+dotnet run --project Wes.Invoice.Test -- smoke [模型目录] [图片路径] [--debug]
 
 # 全量构建
 dotnet build Wes.Invoice.slnx -c Release
@@ -145,8 +142,9 @@ dotnet list package --vulnerable --include-transitive
 冒烟图片路径按以下优先级解析：
 
 1. 命令行参数 —— `smoke <模型目录> <图片路径>`
-2. 环境变量 `INVOICE_OCR_SMOKE_IMAGE`
-3. 运行目录下的 `Assets/test_invoice.png`
+2. 运行目录下的 `Assets/test_invoice.png`
+
+全项目行为均由显式入参决定：类库看 `PaddleOcrConfig`，测试看命令行参数。
 
 **不含任何硬编码的绝对路径**，任何人 clone 后都能直接跑。`Wes.Invoice.Test/Assets/` 下的图片默认被 `.gitignore` 排除（真实票据含敏感信息），详见 `Wes.Invoice.Test/Assets/README.md`。
 
@@ -155,6 +153,7 @@ dotnet list package --vulnerable --include-transitive
 ```
 wes-invoice-ocr/
 ├─ Wes.Invoice.slnx                # 解决方案（类库 + 测试）
+├─ models/                         # PaddleOCR ONNX 模型（已入库，约 25MB，开箱即用）
 ├─ Wes.Invoice.Ocr/                # 类库项目（netstandard2.0，可打包 NuGet）
 │  ├─ Wes.Invoice.Ocr.csproj
 │  ├─ Abstractions/                # 契约层：InvoiceKind / Invoice / FieldValue / OcrBox / IOcrEngine / 错误体系

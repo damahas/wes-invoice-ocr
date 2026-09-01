@@ -10,20 +10,6 @@
     "Smoke-Debug": {
       "commandName": "Project",
       "commandLineArgs": "smoke --debug"
-    },
-    "Smoke-NoBatch": {
-      "commandName": "Project",
-      "commandLineArgs": "smoke",
-      "environmentVariables": {
-        "INVOICE_OCR_REC_BATCH": "0"
-      }
-    },
-    "Smoke-NoRoi": {
-      "commandName": "Project",
-      "commandLineArgs": "smoke",
-      "environmentVariables": {
-        "INVOICE_OCR_ROI": "0"
-      }
     }
   }
 }
