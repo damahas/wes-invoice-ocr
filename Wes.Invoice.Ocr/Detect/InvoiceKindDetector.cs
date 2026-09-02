@@ -15,6 +15,17 @@ public static class InvoiceKindDetector
     {
         var t = text.Trim();
 
+        // 车辆通行费发票（通行费/入口站/出口站特征）：属增值税发票的一种。
+        // 放在最前判定——该类票右上角代码/号码标签常因红字被印章处理抹掉，
+        // 但标题"车辆通行费"与"入口站/出口站"几乎总能识别；若漏判会因
+        // 流水号（如 K737）被误判成火车票。
+        if (t.IndexOf("车辆通行费", StringComparison.Ordinal) >= 0
+            || (t.IndexOf("入口站", StringComparison.Ordinal) >= 0
+                && t.IndexOf("出口站", StringComparison.Ordinal) >= 0))
+        {
+            return InvoiceKind.VatInvoice;
+        }
+
         // netstandard2.0 的 Contains 无 StringComparison 重载，用 IndexOf 等价替换
         if (t.IndexOf("发票代码", StringComparison.Ordinal) >= 0
             || t.IndexOf("发票号码", StringComparison.Ordinal) >= 0
