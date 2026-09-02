@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.RegularExpressions;
 using Wes.Invoice.Ocr.Abstractions;
 
@@ -69,7 +70,18 @@ public static class VerificationService
 
     static string NormalizeAmount(string value)
     {
-        var v = value.IndexOf(',') >= 0 && value.IndexOf('.') < 0 ? value.Replace(',', '.') : value;
-        return Regex.Replace(v, @"[^0-9]", "");
+        var v = Regex.Replace(value.Trim(), @"[^0-9.,]", "");
+        if (v.Length == 0)
+            return value.Trim();
+        // OCR 把小数点误识别为逗号（100,00）：无小数点时逗号当小数点
+        if (v.IndexOf('.') < 0 && v.IndexOf(',') >= 0)
+            v = v.Replace(',', '.');
+        // 千分位（1,234.56）：既有逗号又有小数点时去掉逗号
+        else if (v.IndexOf(',') >= 0)
+            v = v.Replace(",", "");
+        // 按数值比较并统一为两位小数，避免 300.00 vs 300 因小数位不同误报冲突
+        return decimal.TryParse(v, NumberStyles.Number, CultureInfo.InvariantCulture, out var d)
+            ? d.ToString("0.00", CultureInfo.InvariantCulture)
+            : value.Trim();
     }
 }

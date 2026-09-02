@@ -27,6 +27,24 @@ namespace Wes.Invoice.Test
                 throw new Exception($"{what}: 期望 [{expected}] 实际 [{actual}]");
         }
 
+        /// <summary>断言抛指定异常；类型不符或未抛都算失败。</summary>
+        public static void Throws<T>(Action action, string what) where T : Exception
+        {
+            try
+            {
+                action();
+            }
+            catch (T)
+            {
+                return;
+            }
+            catch (Exception ex)
+            {
+                throw new Exception($"{what}: 期望抛 {typeof(T).Name}，实际抛 {ex.GetType().Name}", ex);
+            }
+            throw new Exception($"{what}: 期望抛 {typeof(T).Name}，实际未抛");
+        }
+
         /// <summary>构造最小增值税票据（3 个字段，置信度 1f），供二维码交叉校验测试使用。</summary>
         public static Invoice MakeVatInvoice(string no, string date, string amount) => new(
             InvoiceKind.VatInvoice,
@@ -47,5 +65,18 @@ namespace Wes.Invoice.Test
         public string Name => "noop";
 
         public IReadOnlyList<OcrBox> RecognizeImage(GrayImage image) => [];
+    }
+
+    /// <summary>测试用固定文本引擎：识别任何图像都返回同一行文本，供流水线输入方式测试。</summary>
+    internal sealed class TextEngine : IOcrEngine
+    {
+        private readonly string _text;
+
+        public TextEngine(string text) => _text = text;
+
+        public string Name => "text";
+
+        public IReadOnlyList<OcrBox> RecognizeImage(GrayImage image) =>
+            [new OcrBox(_text, 1f, 0f, 0f, 1f, 1f)];
     }
 }

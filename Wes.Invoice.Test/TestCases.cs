@@ -1,3 +1,4 @@
+using Wes.Invoice.Ocr;
 using Wes.Invoice.Ocr.Abstractions;
 using Wes.Invoice.Ocr.Detect;
 using Wes.Invoice.Ocr.Paddle;
@@ -8,7 +9,7 @@ using static Wes.Invoice.Test.Harness;
 namespace Wes.Invoice.Test;
 
 /// <summary>
-/// 全部单测用例：解析器（8）+ 二维码校验（6）。
+/// 全部单测用例：解析器 + 引擎配置 + 二维码校验。
 /// 均走 <see cref="InvoiceOcrService.ParseText"/> 或纯逻辑，用静态文本 / 构造数据锁定
 /// 「输入 → 输出」契约，不经过模型推理（快且可复现）。
 /// 注意：测的是解析逻辑正确性，不覆盖 OCR 识别准确度（后者需真实图片基准集）。
@@ -161,6 +162,36 @@ internal static class TestCases
         Equal("2024年05月20日", get("invoice_date"), "invoice_date");
     }
 
+    public static void ParseVatCnAmount()
+    {
+        // det 对表格线内"（小写）¥300.00"常漏检，但"叁佰圆整"（大写）可检出；
+        // 价税合计须回退解析中文大写金额
+        var svc = NewService();
+        const string text = """
+            发票号码: 26327000001034015576
+            开票日期: 2026年07月17日
+            价税合计（大写）叁佰圆整
+            名 称: 苏州峰之鼎信息科技有限公司
+            """;
+        var inv = svc.ParseText(text);
+        Equal(InvoiceKind.VatInvoice, inv.Kind, "kind");
+        var get = Field(inv);
+        Equal("300.00", get("total_amount_with_tax"), "total_amount_with_tax");
+
+        // 更复杂的大写金额：万/元/角/分
+        const string big = """
+            发票号码: 12345678
+            价税合计（大写）壹万贰仟叁佰肆拾伍元陆角柒分
+            """;
+        var inv2 = svc.ParseText(big);
+        Equal("12345.67", Field(inv2)("total_amount_with_tax"), "total_amount_with_tax_cn");
+
+        // 小写存在时仍优先小写
+        const string both = "发票号码: 12345678\n价税合计（小写）¥100.00（大写）壹佰元整";
+        var inv3 = svc.ParseText(both);
+        Equal("100.00", Field(inv3)("total_amount_with_tax"), "total_amount_with_tax_priority");
+    }
+
     public static void ParseTextEmptyThrows()
     {
         var svc = NewService();
@@ -233,14 +264,50 @@ internal static class TestCases
         Equal("10", qr.Fields["invoice_type"], "lx");
     }
 
-    public static void QrParseFallbackDigits()
+    public static void QrParseStandardCompact()
     {
-        // 非 URL 回退：逗号分隔串，只提取结构性数字，不猜日期/金额
+        // 紧凑版标准二维码（无种类代码，段 1 即发票代码）：命中 StandardQrRx，全字段提取
         var qr = Wes.Invoice.Ocr.Qr.QrDataParser.Parse("01,011002200111,12345678,100.00,20240520");
         Equal("12345678", qr.Fields["invoice_no"], "invoice_no");
         Equal("011002200111", qr.Fields["invoice_code"], "invoice_code");
-        Equal(false, qr.Fields.ContainsKey("total_amount_with_tax"), "不猜金额");
-        Equal(false, qr.Fields.ContainsKey("invoice_date"), "不猜日期");
+        Equal("100.00", qr.Fields["total_amount_with_tax"], "total_amount_with_tax");
+        Equal("20240520", qr.Fields["invoice_date"], "invoice_date");
+    }
+
+    public static void QrParseFallbackNoAnchor()
+    {
+        // 非 URL 非标准逗号格式：无锚点裸数字不猜测，避免把日期/号码当金额等假字段
+        var qr = Wes.Invoice.Ocr.Qr.QrDataParser.Parse("张三 12345678 100.00 20240520");
+        Equal(0, qr.Fields.Count, "不提取任何字段");
+
+        // 带锚点文本走回退提取，仍不猜金额/日期
+        var qr2 = Wes.Invoice.Ocr.Qr.QrDataParser.Parse("发票号码：12345678 发票代码：011002200111");
+        Equal("12345678", qr2.Fields["invoice_no"], "invoice_no");
+        Equal("011002200111", qr2.Fields["invoice_code"], "invoice_code");
+        Equal(false, qr2.Fields.ContainsKey("total_amount_with_tax"), "不猜金额");
+        Equal(false, qr2.Fields.ContainsKey("invoice_date"), "不猜日期");
+    }
+
+    public static void QrParseStandardDian()
+    {
+        // 数电票标准二维码：8 段，发票代码段为空（用户实测格式）
+        const string raw = "01,32,,26327000001034015576,300.00,20260717,,f8be";
+        var qr = Wes.Invoice.Ocr.Qr.QrDataParser.Parse(raw);
+        Equal("26327000001034015576", qr.Fields["invoice_no"], "invoice_no");
+        Equal("300.00", qr.Fields["total_amount_with_tax"], "total_amount_with_tax");
+        Equal("20260717", qr.Fields["invoice_date"], "invoice_date");
+        Equal(false, qr.Fields.ContainsKey("invoice_code"), "数电票无发票代码");
+    }
+
+    public static void QrParseStandardTraditional()
+    {
+        // 传统增值税发票二维码：7 段
+        const string raw = "01,10,011001605111,80100798,64.9,20161018,85342965681116380258";
+        var qr = Wes.Invoice.Ocr.Qr.QrDataParser.Parse(raw);
+        Equal("80100798", qr.Fields["invoice_no"], "invoice_no");
+        Equal("011001605111", qr.Fields["invoice_code"], "invoice_code");
+        Equal("64.9", qr.Fields["total_amount_with_tax"], "total_amount_with_tax");
+        Equal("20161018", qr.Fields["invoice_date"], "invoice_date");
     }
 
     public static void QrVerifyMatched()
@@ -296,5 +363,84 @@ internal static class TestCases
 
         var v2 = Wes.Invoice.Ocr.Qr.VerificationService.Verify(invoice, null);
         Equal(QrStatus.NotScanned, v2.Status, "null status");
+    }
+
+    public static void QrVerifyAmountDecimalEqual()
+    {
+        // OCR 金额"300"（识别丢小数位）与二维码"300.00"按数值一致，不应误报冲突
+        var invoice = MakeVatInvoice("26327000001034015576", "2026年07月17日", "300");
+        var qr = new QrData("raw", new Dictionary<string, string>
+        {
+            ["invoice_no"] = "26327000001034015576",
+            ["invoice_date"] = "20260717",
+            ["total_amount_with_tax"] = "300.00",
+        });
+        var v = Wes.Invoice.Ocr.Qr.VerificationService.Verify(invoice, qr);
+        Equal(QrStatus.Verified, v.Status, "status");
+        Equal(3, v.Matched.Count, "matched count");
+
+        // 千分位与两位小数也应一致
+        var invoice2 = MakeVatInvoice("12345678", "2024年05月20日", "1,234.56");
+        var qr2 = new QrData("raw", new Dictionary<string, string>
+        {
+            ["invoice_no"] = "12345678",
+            ["total_amount_with_tax"] = "1234.56",
+        });
+        var v2 = Wes.Invoice.Ocr.Qr.VerificationService.Verify(invoice2, qr2);
+        Equal(QrStatus.Verified, v2.Status, "千分位 status");
+    }
+
+    public static void ParseVatTotalSplitLines()
+    {
+        // 逐行 rec 模式 OCR 把"合计/税额"拆成两行，正则须容忍字间换行
+        var svc = NewService();
+        const string text = """
+            发票号码：12345678
+            开票日期：2024年05月20日
+            合
+            计：88.50
+            税
+            额：11.50
+            价税合计（大写）壹佰元整 （小写）¥100.00
+            """;
+        var inv = svc.ParseText(text);
+        Equal(InvoiceKind.VatInvoice, inv.Kind, "kind");
+        var get = Field(inv);
+        Equal("88.50", get("total_amount"), "total_amount");
+        Equal("11.50", get("total_tax"), "total_tax");
+        Equal("100.00", get("total_amount_with_tax"), "total_amount_with_tax");
+    }
+
+    public static void RecognizeImageInputs()
+    {
+        // 最小合法 PNG（1x1 白像素），仅验证流水线输入通道，不涉及真实解码质量
+        byte[] png = Convert.FromBase64String(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==");
+        var svc = new InvoiceOcrService(new TextEngine("发票号码：12345678"));
+
+        var inv1 = svc.RecognizeImageBytes(png);
+        Equal(InvoiceKind.VatInvoice, inv1.Kind, "bytes kind");
+        Equal("12345678", Field(inv1)("invoice_no"), "bytes invoice_no");
+
+        using var ms = new MemoryStream(png);
+        var inv2 = svc.RecognizeImage(ms);
+        Equal("12345678", Field(inv2)("invoice_no"), "stream invoice_no");
+
+        var path = Path.Combine(Path.GetTempPath(), "wes_ocr_input_probe.png");
+        File.WriteAllBytes(path, png);
+        try
+        {
+            var inv3 = svc.RecognizeImage(path);
+            Equal("12345678", Field(inv3)("invoice_no"), "path invoice_no");
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+
+        // 空输入守卫
+        Throws<OcrException>(() => svc.RecognizeImageBytes(Array.Empty<byte>()), "empty bytes");
+        Throws<ArgumentNullException>(() => svc.RecognizeImage((Stream)null!), "null stream");
+        Throws<ArgumentNullException>(() => svc.RecognizeImage((string)null!), "null path");
     }
 }

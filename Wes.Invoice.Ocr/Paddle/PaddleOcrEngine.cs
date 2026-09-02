@@ -7,8 +7,8 @@ namespace Wes.Invoice.Ocr.Paddle;
 /// <summary>
 /// PaddleOCR 引擎（ONNX Runtime 版）。
 /// 流程：det(文本检测) → 文本框矫正 → cls(方向分类, 可选) → rec(文本识别, CTC 解码)。
-/// 模型（PP-OCRv4 det + PP-OCRv6 rec small，官方模型转 ONNX）：
-/// - det.onnx：输入 [1,3,H,W]（动态 H/W，长边上限 960），输出概率图（与输入同尺寸）
+/// 模型（PP-OCRv6 det medium + PP-OCRv6 rec，RapidOCR ONNX 版）：
+/// - det.onnx：输入 [1,3,H,W]（动态 H/W，长边上限 1280），输出概率图（与输入同尺寸）
 /// - rec.onnx：输入 [1,3,48,W]（动态宽，上限 640），输出 [1,T,C]（T=序列长, C=词典+blank）
 /// - cls.onnx（可选）：输入 [1,3,48,192]，输出 2 类
 /// - ppocrv6_dict.txt：中文词典（rec.onnx 内嵌字符集时非必需）
@@ -31,6 +31,7 @@ public sealed class PaddleOcrEngine : IOcrEngine, IDisposable
 
     private readonly bool _detDynamic;
     private readonly int _detH, _detW, _detLimit;
+    private readonly float _dbThresh, _boxThresh;
     private readonly bool _recDynamicW;
     private readonly bool _recBatch;
     private readonly int _recH, _recW, _recMaxW;
@@ -80,6 +81,8 @@ public sealed class PaddleOcrEngine : IOcrEngine, IDisposable
         // ROI / 批量：由配置在构造时确定并缓存为字段，避免每次 RecognizeImage 重复判断。
         // 全部行为只取决于传入的配置，支持同进程内多实例差异化。
         _roiEnabled = cfg.RoiEnabled;
+        _dbThresh = cfg.DbThresh;
+        _boxThresh = cfg.BoxThresh;
 
         // 会话线程配置：rec 会话池 N 个 × 每会话 intra 线程 = max(1, 核数/N)
         var recThreads = Math.Max(Math.Min(cfg.RecThreads, 16), 1);
@@ -170,7 +173,7 @@ public sealed class PaddleOcrEngine : IOcrEngine, IDisposable
 
         var (score, _) = OnnxSessionFactory.RunSingle(_det, _detInput, detInput, new[] { 1, 3, mh, mw });
         var scoreMap = Decode.ExtractScoreMap(score, new[] { 1, 1, mh, mw }, mh, mw);
-        var quads = DetPost.DetectBoxes(scoreMap, mh, mw, 1.0f / rX, 1.0f / rY, offX, offY);
+        var quads = DetPost.DetectBoxes(scoreMap, mh, mw, 1.0f / rX, 1.0f / rY, offX, offY, _dbThresh, _boxThresh);
         var detMs = DetMs();
 
         // ROI 过滤：中心落在任一 ROI 矩形内的框（归一化坐标）

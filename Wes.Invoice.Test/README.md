@@ -16,15 +16,15 @@ dotnet run --project Wes.Invoice.Test
 ### 2. 冒烟（端到端，真实模型 + 图片）
 
 ```bash
-dotnet run --project Wes.Invoice.Test -- smoke [模型目录] [图片路径] [--debug]
+dotnet run --project Wes.Invoice.Test -- smoke [图片路径] [模型目录] [--debug]
 ```
 
 三个参数**均可省略**：
 
 | 参数 | 省略时默认 |
 |------|-----------|
-| 模型目录 | 运行目录下 `models/`（构建时自动从仓库根 `models/` 复制）|
 | 图片路径 | 运行目录下 `Assets/test_invoice.png`（构建时自动复制）|
+| 模型目录 | 运行目录下 `models/`（构建时自动从仓库根 `models/` 复制）|
 | `--debug` | 不打印诊断（见下）|
 
 示例：
@@ -33,15 +33,29 @@ dotnet run --project Wes.Invoice.Test -- smoke [模型目录] [图片路径] [--
 # 最简：全部用默认值
 dotnet run --project Wes.Invoice.Test -- smoke
 
-# 自定义模型目录
-dotnet run --project Wes.Invoice.Test -- smoke D:/models/ppocrv5
+# 自定义图片（模型用默认）
+dotnet run --project Wes.Invoice.Test -- smoke D:/samples/another_invoice.jpg
 
-# 自定义模型 + 自定义图片
-dotnet run --project Wes.Invoice.Test -- smoke models D:/samples/another_invoice.jpg
+# 自定义图片 + 自定义模型
+dotnet run --project Wes.Invoice.Test -- smoke D:/samples/another_invoice.jpg D:/models/ppocrv5
 
 # 诊断模式：打印 det/rec 输入输出 shape、概率统计、分段计时、批量 vs 逐行对比
 dotnet run --project Wes.Invoice.Test -- smoke --debug
+
+# 调参模式：提高分辨率 + 加大 rec 宽度 + 降低框阈值（适合长号码/表格密集发票）
+dotnet run --project Wes.Invoice.Test -- smoke invoice.png --det-limit 1280 --rec-max-w 640 --box-thresh 0.45 --db-thresh 0.25
 ```
+
+可用选项（不区分顺序，位置参数始终在前）：
+
+| 选项 | 说明 | 默认值 |
+|------|------|--------|
+| `--debug` | 诊断模式（det shape / 概率统计 / 分段计时） | 关闭 |
+| `--det-limit N` | det 输入长边上限 | `1280` |
+| `--db-thresh F` | DB 二值化阈值（0~1） | `0.3` |
+| `--box-thresh F` | 框最小像素占比阈值（0~1） | `0.5` |
+| `--rec-max-w N` | rec 输入最大宽 | `640` |
+| `--ep cpu\|cuda\|directml\|auto` | 执行提供方 | `cuda` |
 
 ### 3. 直接运行已构建产物
 
@@ -52,11 +66,11 @@ dotnet build Wes.Invoice.slnx -c Release
 
 ## 冒烟图片路径
 
-优先级：命令行第二个位置参数 &gt; 运行目录下 `Assets/test_invoice.png`。
+优先级：命令行第一个位置参数 &gt; 运行目录下 `Assets/test_invoice.png`。
 
 ```bash
-# 显式指定图片
-dotnet run --project Wes.Invoice.Test -- smoke models D:/samples/another_invoice.jpg
+# 显式指定图片（模型目录为第二个位置参数，可省略）
+dotnet run --project Wes.Invoice.Test -- smoke D:/samples/another_invoice.jpg
 
 # 或把图片放到 Wes.Invoice.Test/Assets/test_invoice.png，直接跑
 dotnet run --project Wes.Invoice.Test -- smoke

@@ -7,8 +7,6 @@ namespace Wes.Invoice.Ocr.Algorithms;
 /// </summary>
 public static class DetPost
 {
-    public const float DbThresh = 0.3f;
-    public const float BoxThresh = 0.6f;
     public const float UnclipRatio = 1.5f;
 
     /// <summary>从 det 模型输出的概率图提取文本框。</summary>
@@ -19,9 +17,12 @@ public static class DetPost
     /// <param name="scaleY">模型坐标→原图坐标的 Y 缩放。</param>
     /// <param name="offX">模型坐标系中的 pad 偏移 X（右下角 pad 时为 0）。</param>
     /// <param name="offY">模型坐标系中的 pad 偏移 Y。</param>
+    /// <param name="dbThresh">DB 二值化阈值（默认 0.3）。</param>
+    /// <param name="boxThresh">框最小平均概率阈值（默认 0.6）。</param>
     public static List<Quad> DetectBoxes(
         float[] score, int modelH, int modelW,
-        float scaleX, float scaleY, int offX, int offY)
+        float scaleX, float scaleY, int offX, int offY,
+        float dbThresh = 0.3f, float boxThresh = 0.6f)
     {
         int total = modelH * modelW;
         if (score.Length < total)
@@ -30,7 +31,7 @@ public static class DetPost
         // 二值化
         var mask = new bool[total];
         for (int i = 0; i < total; i++)
-            mask[i] = score[i] > DbThresh;
+            mask[i] = score[i] > dbThresh;
 
         // 8 邻域连通域标记
         var labels = new int[total];
@@ -70,7 +71,7 @@ public static class DetPost
             if (pix.Count < 3)
                 continue;
             float mean = sums[lab] / pix.Count;
-            if (mean < BoxThresh)
+            if (mean < boxThresh)
                 continue;
 
             // 惰性构造坐标点（仅对通过的框）

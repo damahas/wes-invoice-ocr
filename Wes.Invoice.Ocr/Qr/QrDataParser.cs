@@ -5,10 +5,11 @@ namespace Wes.Invoice.Ocr.Qr;
 
 /// <summary>
 /// 二维码内容解析：从原始文本提取规范化字段（key 与 FieldValue 对齐）。
-/// 支持两类：
+/// 按置信度依次尝试三类：
 /// 1. 数电票/电子发票查验 URL（inv-veri.chinatax.gov.cn?lx=&fphm=&kprq=&jshj=&bmxx=）——高置信，全字段。
-/// 2. 非 URL 回退——只提取结构性数字（发票代码 10/12 位、发票号码 8 位），
-///    日期/金额不猜测（避免误提取导致校验误报）。
+/// 2. 增值税发票/数电票标准二维码：逗号分隔 5~8 段，位置固定——高置信，全字段。
+/// 3. 非上述格式回退——只认带中文/英文锚点的字段（如"发票号码12345678"），
+///    不猜测裸数字（裸 8 位数字可能是日期，误提取会导致校验误报）。
 /// </summary>
 public static class QrDataParser
 {
@@ -16,12 +17,32 @@ public static class QrDataParser
         @"https?://[^\s""']+",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
+    /// <summary>
+    /// 增值税发票 / 数电票标准二维码（逗号分隔，位置固定）。两种布局：
+    /// 布局 A（7~8 段）：0 保留(常见 01), 1 种类代码(1~2 位), 2 发票代码(0~12 位，数电票为空),
+    ///   3 发票号码(8~20 位), 4 价税合计, 5 开票日期 yyyyMMdd [, 6 校验码] [, 7 随机码]
+    ///   例：01,32,,26327000001034015576,300.00,20260717,,f8be（数电票）
+    ///       01,10,011001605111,80100798,64.9,20161018,85342965681116380258（传统票）
+    /// 布局 B（5~6 段，无种类代码）：0 保留, 1 发票代码(10~12 位), 2 发票号码(8~20 位),
+    ///   3 价税合计, 4 开票日期 yyyyMMdd [, 5 校验码]
+    ///   例：01,011002200111,12345678,100.00,20240520
+    /// 注：`\d{n,m}` 后紧跟 `,` 时会被逗号锚死（贪婪吃满段内数字且无法让位），
+    /// 故两种布局必须分开写，不能共用同一段位模板。
+    /// </summary>
+    private static readonly Regex StandardQrRx = new(
+        @"^\s*\d{1,2}\s*,\s*(?:" +
+        @"(?<kind>\d{1,2})\s*,\s*(?<code>\d{0,12})\s*,\s*(?<no>\d{8,20})\s*,\s*(?<amt>\d+(?:\.\d{1,2})?)\s*,\s*(?<date>\d{8})\s*(?:,\s*[^,\s]*\s*)?(?:,\s*[^,\s]*\s*)?" +
+        @"|(?<codeB>\d{10,12})\s*,\s*(?<noB>\d{8,20})\s*,\s*(?<amtB>\d+(?:\.\d{1,2})?)\s*,\s*(?<dateB>\d{8})\s*(?:,\s*[^,\s]*\s*)?)" +
+        @"\s*$",
+        RegexOptions.Compiled);
+
+    // 回退：只认带锚点的写法。发票号码 8~20 位（数电票为 20 位，传统票为 8 位）。
     private static readonly Regex InvoiceNoRx = new(
-        @"(?:发票号码|号码|NO|No\.?)[:：]?\s*(\d{8})|(?<![0-9])\d{8}(?![0-9])",
+        @"(?:发票号码|号码|NO|No\.?)[:：]?\s*(\d{8,20})",
         RegexOptions.Compiled);
 
     private static readonly Regex InvoiceCodeRx = new(
-        @"(?:发票代码|代码|CODE)[:：]?\s*(\d{10,12})|(?<![0-9])\d{12}(?![0-9])|(?<![0-9])\d{10}(?![0-9])",
+        @"(?:发票代码|代码|CODE)[:：]?\s*(\d{10,12})",
         RegexOptions.Compiled);
 
     public static QrData Parse(string content)
@@ -51,13 +72,31 @@ public static class QrDataParser
         }
         else
         {
-            // 回退模式：只提取高置信结构性数字
-            var no = InvoiceNoRx.Match(text);
-            if (no.Success)
-                fields["invoice_no"] = no.Groups[1].Success ? no.Groups[1].Value : no.Value;
-            var code = InvoiceCodeRx.Match(text);
-            if (code.Success)
-                fields["invoice_code"] = code.Groups[1].Success ? code.Groups[1].Value : code.Value;
+            var std = StandardQrRx.Match(text);
+            if (std.Success)
+            {
+                // 标准逗号分隔二维码。布局 A 走 kind/code/no/amt/date，
+                // 布局 B 走 codeB/noB/amtB/dateB（段 1 即发票代码，无种类代码）。
+                var no = std.Groups["no"].Success ? std.Groups["no"].Value : std.Groups["noB"].Value;
+                var amt = std.Groups["amt"].Success ? std.Groups["amt"].Value : std.Groups["amtB"].Value;
+                var date = std.Groups["date"].Success ? std.Groups["date"].Value : std.Groups["dateB"].Value;
+                var code = std.Groups["code"].Success ? std.Groups["code"].Value : std.Groups["codeB"].Value;
+                fields["invoice_no"] = no;
+                fields["total_amount_with_tax"] = amt;
+                fields["invoice_date"] = NormalizeDate(date);
+                if (code.Length > 0)
+                    fields["invoice_code"] = code;
+            }
+            else
+            {
+                // 回退模式：只提取高置信结构性数字
+                var no = InvoiceNoRx.Match(text);
+                if (no.Success)
+                    fields["invoice_no"] = no.Groups[1].Success ? no.Groups[1].Value : no.Value;
+                var code = InvoiceCodeRx.Match(text);
+                if (code.Success)
+                    fields["invoice_code"] = code.Groups[1].Success ? code.Groups[1].Value : code.Value;
+            }
         }
 
         return new QrData(text, fields);

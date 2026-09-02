@@ -85,7 +85,16 @@ jobs:
           --api-key ${{ steps.login.outputs.NUGET_API_KEY }}
           --skip-duplicate
 
-      - name: 创建 GitHub Release
+      # 幂等：重跑工作流时 Release 可能已存在（手动创建过或上次跑到一半），
+      # gh release create 遇到同名会直接失败退出，故先探测再决定创建还是补传。
+      # --clobber：同名附件覆盖而非报错。
+      - name: 创建 / 更新 GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release create "$GITHUB_REF_NAME" artifacts/*.nupkg --generate-notes
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME 已存在，补传附件"
+            gh release upload "$GITHUB_REF_NAME" artifacts/*.nupkg --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" artifacts/*.nupkg --generate-notes
+          fi

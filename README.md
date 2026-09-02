@@ -37,16 +37,20 @@ Install-Package Wes.Invoice.Ocr
 
 ```csharp
 using Wes.Invoice.Ocr;
+using Wes.Invoice.Ocr.Abstractions;   // ToWireString() 扩展方法在此命名空间
 using Wes.Invoice.Ocr.Paddle;
 using Wes.Invoice.Ocr.Qr;
 
 // 1. 构造 OCR 引擎（指向包含 det.onnx / rec.onnx / cls.onnx / 字典 的模型目录）
+//    引擎持有非托管推理会话，必须 Dispose（或 using）
 using var engine = new PaddleOcrEngine(
     @"models",
     new PaddleOcrConfig { Ep = EpPreference.Cpu });
 
 // 2. 构造门面（可选传入二维码解码器，启用交叉校验）
-using var svc = new InvoiceOcrService(engine, qrDecoder: new ZxingQrDecoder());
+//    注意：InvoiceOcrService 未实现 IDisposable —— 它不拥有引擎，
+//    引擎的生命周期由调用方负责，故此处不能用 using
+var svc = new InvoiceOcrService(engine, qrDecoder: new ZxingQrDecoder());
 
 // 3. 识别图片字节
 var invoice = svc.RecognizeImageBytes(File.ReadAllBytes("invoice.png"));
@@ -55,10 +59,14 @@ foreach (var f in invoice.Fields)
     Console.WriteLine($"{f.Label} = {f.Value}");
 
 // 4. 二维码校验结果（图片输入时自动并行校验）
+//    Verification 可空：未传 qrDecoder、或走 PDF / 纯文本路径时为 null
 var v = invoice.Verification;
-Console.WriteLine(v.Status);      // NotScanned / Verified / Mismatch / DecodeFailed
-foreach (var c in v.Conflicts)
-    Console.WriteLine($"冲突 {c.Key}: 二维码[{c.QrValue}] vs OCR[{c.OcrValue}]");
+if (v is not null)
+{
+    Console.WriteLine(v.Status);      // Verified / Mismatch / DecodeFailed
+    foreach (var c in v.Conflicts)
+        Console.WriteLine($"冲突 {c.Key}: 二维码[{c.QrValue}] vs OCR[{c.OcrValue}]");
+}
 ```
 
 ### 直接解析文本
@@ -100,14 +108,32 @@ models/
 
 | 配置 | 默认值 | 说明 |
 |------|--------|------|
-| `DetLimit` | 960 | det 输入长边上限 |
-| `RecMaxW` | 320 | rec 单段最大宽度（超长行自动滑窗切分） |
+| `DetLimit` | 1280 | det 输入长边上限 |
+| `RecMaxW` | 640 | rec 单段最大宽度（超长行自动滑窗切分） |
 | `RecThreads` | 4 | rec 会话池线程数（1~16），在构造时确定 |
 | `RecBatch` | `false` | rec 批量推理；实测比逐行慢 ~19%，仅用于对照排查（模型 batch 维度动态时才生效） |
 | `RoiEnabled` | `false` | ROI 区域裁剪（可调速，但版式不匹配时会静默错字段，仅供调试） |
 | `Ep` | `Auto` | 执行提供方：`Cpu` / `DirectML` / `Cuda` / `Auto`（Auto 仅尝试 N 卡 CUDA，失败回退 CPU，不考虑核显） |
 
 构造后配置即固定；同进程内需要不同行为请建多个引擎实例（如逐行/批量对照）。
+
+### 调参指南（解决特定版式识别不佳）
+
+若某张发票出现**长串号码断裂**（如 20 位发票号只读出前几位）、**细小文字漏检**或**表格底部字段缺失**，可调整以下参数：
+
+| 参数 | 默认值 | 调大效果 | 调小效果 |
+|------|--------|---------|---------|
+| `DetLimit` | `1280` | 对高分辨率/小字发票检测更准，推理更慢、显存更大 | 更快，但小字可能模糊 |
+| `RecMaxW` | `640` | 长文本行（长串数字、长公司名）识别更准 | 更快，超长行会被截断误读 |
+| `DbThresh` | `0.3` | 更少的候选区域，漏检增加 | 更多候选区域，误检增加 |
+| `BoxThresh` | `0.5` | 更严格的框过滤，漏框增加 | 对表格线/印章遮挡更容忍，框更碎 |
+
+默认值已针对**发票场景**调优（det medium + 高分辨率 + 长号码）。若表格内小字仍漏检，可再压低 `BoxThresh=0.45, DbThresh=0.25` 试一把；若追求速度（非发票场景）可下调 `DetLimit=960`。
+
+冒烟命令行调参示例：
+```bash
+dotnet run --project Wes.Invoice.Test -- smoke invoice.png --det-limit 1600 --rec-max-w 640 --box-thresh 0.45 --db-thresh 0.25
+```
 
 ## 环境要求
 
@@ -126,8 +152,8 @@ models/
 # 解析器 / 类型判定单元测试（零依赖，退出码 0/1 可入 CI）
 dotnet run --project Wes.Invoice.Test
 
-# 端到端冒烟（模型目录省略时默认取运行目录下 models/；--debug 打印 det 的 shape 与概率统计）
-dotnet run --project Wes.Invoice.Test -- smoke [模型目录] [图片路径] [--debug]
+# 端到端冒烟（图片省略时默认取 Assets/test_invoice.png，模型目录省略时默认取运行目录下 models/；--debug 打印 det 的 shape 与概率统计）
+dotnet run --project Wes.Invoice.Test -- smoke [图片路径] [模型目录] [--debug]
 
 # 全量构建
 dotnet build Wes.Invoice.slnx -c Release
@@ -141,7 +167,7 @@ dotnet list package --vulnerable --include-transitive
 
 冒烟图片路径按以下优先级解析：
 
-1. 命令行参数 —— `smoke <模型目录> <图片路径>`
+1. 命令行参数 —— `smoke <图片路径> [模型目录]`
 2. 运行目录下的 `Assets/test_invoice.png`
 
 全项目行为均由显式入参决定：类库看 `PaddleOcrConfig`，测试看命令行参数。

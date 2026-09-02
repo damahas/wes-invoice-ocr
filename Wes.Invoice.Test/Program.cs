@@ -3,8 +3,8 @@ using Wes.Invoice.Test;
 // 轻量单测入口：无第三方测试框架，退出码 0/1 可入 CI。
 // 运行:
 //   单测   dotnet run --project Wes.Invoice.Test                    （退出码 0/1，可入 CI）
-//   冒烟   dotnet run --project Wes.Invoice.Test -- smoke [模型目录] [图片路径] [--debug]
-//         模型目录省略时用输出目录下 models/（构建自动从仓库根复制）；图片省略时用 Assets/test_invoice.png
+//   冒烟   dotnet run --project Wes.Invoice.Test -- smoke [图片路径] [模型目录] [--debug]
+//         图片省略时用 Assets/test_invoice.png；模型目录省略时用输出目录下 models/（构建自动从仓库根复制）
 //
 // 新增测试：在下面的 Tests 数组中加一行即可（用例写在 TestCases.cs）。
 
@@ -20,6 +20,9 @@ var tests = new (string Name, Action Run)[]
     ("DetectKind", TestCases.DetectKind),
     ("ParseVatRealInvoice", TestCases.ParseVatRealInvoice),
     ("ParseVatDateWithSpaces", TestCases.ParseVatDateWithSpaces),
+    ("ParseVatTotalSplitLines", TestCases.ParseVatTotalSplitLines),
+    ("ParseVatCnAmount", TestCases.ParseVatCnAmount),
+    ("RecognizeImageInputs", TestCases.RecognizeImageInputs),
     ("ParseTextEmptyThrows", TestCases.ParseTextEmptyThrows),
     ("ParserRegistryDefault", TestCases.ParserRegistryDefault),
 
@@ -29,10 +32,14 @@ var tests = new (string Name, Action Run)[]
 
     // 二维码校验
     ("QrParseVerifyUrl", TestCases.QrParseVerifyUrl),
-    ("QrParseFallbackDigits", TestCases.QrParseFallbackDigits),
+    ("QrParseStandardCompact", TestCases.QrParseStandardCompact),
+    ("QrParseFallbackNoAnchor", TestCases.QrParseFallbackNoAnchor),
+    ("QrParseStandardDian", TestCases.QrParseStandardDian),
+    ("QrParseStandardTraditional", TestCases.QrParseStandardTraditional),
     ("QrVerifyMatched", TestCases.QrVerifyMatched),
     ("QrVerifyMismatch", TestCases.QrVerifyMismatch),
     ("QrVerifyDateAmountNormalize", TestCases.QrVerifyDateAmountNormalize),
+    ("QrVerifyAmountDecimalEqual", TestCases.QrVerifyAmountDecimalEqual),
     ("QrVerifyNoCommonFields", TestCases.QrVerifyNoCommonFields),
 };
 

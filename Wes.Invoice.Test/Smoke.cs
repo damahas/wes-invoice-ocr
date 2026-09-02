@@ -16,39 +16,56 @@ internal static class Smoke
 {
     public static int Run(string[] args)
     {
-        // 模型目录可省略：缺省用运行目录下 models/（构建时已自动从仓库根复制）
-        var positional = args.Where(a => !a.StartsWith("--", StringComparison.Ordinal)).ToList();
-        string modelDir = positional.Count > 0
+        // 位置参数：第一个为图片路径，第二个为模型目录（均可省略，见下）
+        // 排除所有选项及其尾随值，避免 "--det-limit 1280" 中的 1280 被误当成模型目录
+        var positional = ExtractPositional(args);
+        string imagePath = positional.Count > 0
             ? positional[0]
+            : Path.Combine(AppContext.BaseDirectory, "Assets", DefaultImageName);
+        string modelDir = positional.Count > 1
+            ? positional[1]
             : Path.Combine(AppContext.BaseDirectory, "models");
-        string imagePath = ResolveImagePath(args);
         bool debug = args.Contains("--debug");
-
-        if (!Directory.Exists(modelDir))
-        {
-            Console.Error.WriteLine($"模型目录不存在: {modelDir}");
-            Console.Error.WriteLine("用法: dotnet run --project Wes.Invoice.Test -- smoke [模型目录] [图片路径] [--debug]");
-            Console.Error.WriteLine("模型目录省略时默认取运行目录下 models/（构建自动复制）。");
-            return 1;
-        }
 
         if (!File.Exists(imagePath))
         {
             Console.Error.WriteLine($"图片不存在: {imagePath}");
-            Console.Error.WriteLine("请传入图片路径，");
-            Console.Error.WriteLine($"或将图片放置为运行目录下的 {Path.Combine("Assets", DefaultImageName)}。");
+            Console.Error.WriteLine("用法: dotnet run --project Wes.Invoice.Test -- smoke [图片路径] [模型目录] [选项]");
+            Console.Error.WriteLine("  --debug          诊断模式（det shape / 概率统计 / 分段计时）");
+            Console.Error.WriteLine("  --det-limit N    det 输入长边上限（默认 960）");
+            Console.Error.WriteLine("  --db-thresh F    DB 二值化阈值（默认 0.3）");
+            Console.Error.WriteLine("  --box-thresh F   框最小像素占比阈值（默认 0.6）");
+            Console.Error.WriteLine("  --rec-max-w N    rec 输入最大宽（默认 320）");
+            Console.Error.WriteLine("  --ep cpu|cuda|directml|auto  执行提供方（默认 cuda）");
+            Console.Error.WriteLine("图片省略时默认取运行目录下 Assets/test_invoice.png。");
             return 1;
         }
+
+        if (!Directory.Exists(modelDir))
+        {
+            Console.Error.WriteLine($"模型目录不存在: {modelDir}");
+            Console.Error.WriteLine("模型目录省略时默认取运行目录下 models/（构建自动复制）。");
+            return 1;
+        }
+
+        var cfg = new PaddleOcrConfig
+        {
+            Ep = ParseEp(args, "--ep", EpPreference.Cuda),
+            DetLimit = ParseInt(args, "--det-limit", PaddleOcrConfig.DefaultDetLimit),
+            DbThresh = ParseFloat(args, "--db-thresh", PaddleOcrConfig.DefaultDbThresh),
+            BoxThresh = ParseFloat(args, "--box-thresh", PaddleOcrConfig.DefaultBoxThresh),
+            RecMaxW = ParseInt(args, "--rec-max-w", PaddleOcrConfig.DefaultRecMaxW),
+        };
 
         try
         {
             if (debug)
             {
-                DebugRun(modelDir, imagePath);
+                DebugRun(modelDir, imagePath, cfg);
                 return 0;
             }
 
-            using var engine = new PaddleOcrEngine(modelDir, new PaddleOcrConfig { Ep = EpPreference.Cuda });
+            using var engine = new PaddleOcrEngine(modelDir, cfg);
             var svc = new InvoiceOcrService(engine, qrDecoder: new Wes.Invoice.Ocr.Qr.ZxingQrDecoder());
 
             Console.WriteLine($"引擎: {svc.EngineName}  生效 EP: {engine.EpName}");
@@ -65,12 +82,14 @@ internal static class Smoke
 
             var v = invoice.Verification;
             Console.WriteLine($"\n二维码校验: {v?.Status ?? Wes.Invoice.Ocr.Abstractions.QrStatus.NotScanned}");
+            if (!string.IsNullOrEmpty(v?.RawContent))
+                Console.WriteLine($"  二维码原文: {v.RawContent}");
             foreach (var m in v?.Matched ?? [])
                 Console.WriteLine($"  ✓ {m.Key}: 二维码[{m.QrValue}] == OCR[{m.OcrValue}]");
             foreach (var c in v?.Conflicts ?? [])
                 Console.WriteLine($"  ✗ {c.Key}: 二维码[{c.QrValue}] != OCR[{c.OcrValue}]");
             Console.WriteLine("\n--- 原始文本 ---");
-            Console.WriteLine(invoice.RawText[..Math.Min(invoice.RawText.Length, 1500)]);
+            Console.WriteLine(invoice.RawText[..Math.Min(invoice.RawText.Length, 4000)]);
             return 0;
         }
         catch (Exception ex)
@@ -84,23 +103,8 @@ internal static class Smoke
 
     const string DefaultImageName = "test_invoice.png";
 
-    /// <summary>
-    /// 图片路径解析：命令行参数 &gt; 运行目录下 Assets/test_invoice.png。
-    /// 行为完全由命令行入参决定，避免隐式全局状态。
-    /// 用运行目录（AppContext.BaseDirectory）拼接，避免硬编码绝对路径。
-    /// </summary>
-    static string ResolveImagePath(string[] args)
+    static void DebugRun(string modelDir, string imagePath, PaddleOcrConfig cfg)
     {
-        // 第一个非选项参数即图片路径（--debug 等选项可出现在任意位置，不能按固定下标取）
-        var positional = args.Where(a => !a.StartsWith("--", StringComparison.Ordinal)).ToList();
-        return positional.Count > 1
-            ? positional[1]
-            : Path.Combine(AppContext.BaseDirectory, "Assets", DefaultImageName);
-    }
-
-    static void DebugRun(string modelDir, string imagePath)
-    {
-        var cfg = new PaddleOcrConfig { Ep = EpPreference.Cpu };
         using var det = new InferenceSession(Path.Combine(modelDir, "det.onnx"), new SessionOptions());
         Console.WriteLine("det 输入名: " + string.Join(", ", det.InputMetadata.Keys));
         foreach (var kv in det.InputMetadata)
@@ -112,8 +116,8 @@ internal static class Smoke
         var img = ImageSharpImageDecoder.DecodeGray(File.ReadAllBytes(imagePath));
         Console.WriteLine($"图片: {img.Width}x{img.Height}");
 
-        var (t, dh, dw, rx, ry, ox, oy) = Preprocess.PreprocessDetDyn(img, 960);
-        Console.WriteLine($"det 输入: {dh}x{dw}, ratio={rx}");
+        var (t, dh, dw, rx, ry, ox, oy) = Preprocess.PreprocessDetDyn(img, cfg.DetLimit);
+        Console.WriteLine($"det 输入: {dh}x{dw}, ratio={rx}, limit={cfg.DetLimit}, dbThresh={cfg.DbThresh}, boxThresh={cfg.BoxThresh}");
         var detInput = det.InputMetadata.Keys.First();
         using var results = det.Run(new List<NamedOnnxValue>
         {
@@ -128,11 +132,10 @@ internal static class Smoke
         foreach (var v in arr) sum += v;
         Console.WriteLine($"概率值: min={min:F4} max={max:F4} mean={sum / arr.Length:F4}");
 
-        // 用输出 shape 取概率图
         var shape = dims;
         int mh = shape[^2], mw = shape[^1];
         var map = Decode.ExtractScoreMap(arr, shape, mh, mw);
-        var quads = DetPost.DetectBoxes(map, mh, mw, 1.0f / rx, 1.0f / ry, ox, oy);
+        var quads = DetPost.DetectBoxes(map, mh, mw, 1.0f / rx, 1.0f / ry, ox, oy, cfg.DbThresh, cfg.BoxThresh);
         Console.WriteLine($"检测框数: {quads.Count}");
 
         // 全量框尺寸分析：为“框过滤”阈值提供数据依据（不是拍脑袋定值）
@@ -250,6 +253,57 @@ internal static class Smoke
         Console.WriteLine($"  Ep=Auto 实际生效 EP: {gpu.EpName}（CUDA 表示已走 N 卡，CPU 表示已回退）");
         Console.WriteLine($"  Ep=Auto 耗时: {string.Join(", ", g)} ms  中位数 {gMed} ms");
         Console.WriteLine("  （对比上方 CPU 分段计时的中位数值）");
+    }
+
+    // ----- 命令行选项解析辅助 -----
+    static List<string> ExtractPositional(string[] args)
+    {
+        var valueOpts = new HashSet<string> { "--det-limit", "--db-thresh", "--box-thresh", "--rec-max-w", "--ep" };
+        var pos = new List<string>();
+        for (int i = 0; i < args.Length; i++)
+        {
+            if (args[i].StartsWith("--", StringComparison.Ordinal))
+            {
+                if (valueOpts.Contains(args[i]))
+                    i++; // 跳过尾随值
+                continue;
+            }
+            pos.Add(args[i]);
+        }
+        return pos;
+    }
+
+    static int ParseInt(string[] args, string key, int fallback)
+    {
+        int i = Array.IndexOf(args, key);
+        if (i >= 0 && i + 1 < args.Length && int.TryParse(args[i + 1], out int v))
+            return v;
+        return fallback;
+    }
+
+    static float ParseFloat(string[] args, string key, float fallback)
+    {
+        int i = Array.IndexOf(args, key);
+        if (i >= 0 && i + 1 < args.Length && float.TryParse(args[i + 1], out float v))
+            return v;
+        return fallback;
+    }
+
+    static EpPreference ParseEp(string[] args, string key, EpPreference fallback)
+    {
+        int i = Array.IndexOf(args, key);
+        if (i >= 0 && i + 1 < args.Length)
+        {
+            return args[i + 1].ToLowerInvariant() switch
+            {
+                "cpu" => EpPreference.Cpu,
+                "cuda" => EpPreference.Cuda,
+                "directml" => EpPreference.DirectML,
+                "auto" => EpPreference.Auto,
+                _ => fallback,
+            };
+        }
+        return fallback;
     }
 
     private sealed class ConsoleLogger : Wes.Invoice.Ocr.Paddle.ILogger

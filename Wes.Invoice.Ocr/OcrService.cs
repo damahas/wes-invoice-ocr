@@ -1,3 +1,4 @@
+using System.IO;
 using Wes.Invoice.Ocr.Abstractions;
 using Wes.Invoice.Ocr.Detect;
 using Wes.Invoice.Ocr.Parsers;
@@ -37,13 +38,34 @@ namespace Wes.Invoice.Ocr
 
         public string EngineName => _engine.Name;
 
-        /// <summary>识别图片（jpg/png/bmp/webp 等），返回结构化票据。</summary>
+        /// <summary>识别图片字节（jpg/png/bmp/webp 等），返回结构化票据。</summary>
         public Invoice RecognizeImageBytes(byte[] data)
         {
             if (data.Length == 0)
                 throw OcrException.EmptyInput();
             var img = Imaging.ImageSharpImageDecoder.DecodeGray(data);
             return RecognizeImage(img);
+        }
+
+        /// <summary>
+        /// 识别图片流（jpg/png/bmp/webp 等），返回结构化票据。
+        /// 流不要求可定位（内部整体读入内存后解码）。
+        /// </summary>
+        public Invoice RecognizeImage(Stream stream)
+        {
+            if (stream is null)
+                throw new ArgumentNullException(nameof(stream));
+            using var ms = new MemoryStream();
+            stream.CopyTo(ms);
+            return RecognizeImageBytes(ms.ToArray());
+        }
+
+        /// <summary>识别图片文件（jpg/png/bmp/webp 等），返回结构化票据。</summary>
+        public Invoice RecognizeImage(string filePath)
+        {
+            if (string.IsNullOrWhiteSpace(filePath))
+                throw new ArgumentNullException(nameof(filePath));
+            return RecognizeImageBytes(File.ReadAllBytes(filePath));
         }
 
         /// <summary>
@@ -79,7 +101,7 @@ namespace Wes.Invoice.Ocr
         }
 
         /// <summary>
-        /// 识别 PDF：先尝试文本提取（电子发票/行程单通常直接可读）；
+        /// 识别 PDF 字节：先尝试文本提取（电子发票/行程单通常直接可读）；
         /// 扫描件抛 <see cref="OcrErrorKind.RasterNotAvailable"/>，待接入渲染后端后走图片 OCR。
         /// </summary>
         public Invoice RecognizePdfBytes(byte[] data)
@@ -90,6 +112,24 @@ namespace Wes.Invoice.Ocr
             if (text.Trim().Length < 20)
                 throw OcrException.RasterNotAvailable();
             return ParseText(text);
+        }
+
+        /// <summary>识别 PDF 流：先尝试文本提取；扫描件抛 <see cref="OcrErrorKind.RasterNotAvailable"/>。</summary>
+        public Invoice RecognizePdf(Stream stream)
+        {
+            if (stream is null)
+                throw new ArgumentNullException(nameof(stream));
+            using var ms = new MemoryStream();
+            stream.CopyTo(ms);
+            return RecognizePdfBytes(ms.ToArray());
+        }
+
+        /// <summary>识别 PDF 文件：先尝试文本提取；扫描件抛 <see cref="OcrErrorKind.RasterNotAvailable"/>。</summary>
+        public Invoice RecognizePdf(string filePath)
+        {
+            if (string.IsNullOrWhiteSpace(filePath))
+                throw new ArgumentNullException(nameof(filePath));
+            return RecognizePdfBytes(File.ReadAllBytes(filePath));
         }
 
         /// <summary>直接解析已有文本（调试 / 单元测试 / 复用提取结果）。无图像输入，二维码校验为 NotScanned。</summary>

@@ -19,14 +19,22 @@ public enum EpPreference
 /// <summary>PaddleOCR 引擎可调参数。</summary>
 public sealed record PaddleOcrConfig
 {
-    public const int DefaultDetLimit = 960;
-    public const int DefaultRecMaxW = 320;
+    public const int DefaultDetLimit = 1280;
+    public const int DefaultRecMaxW = 640;
+    public const float DefaultDbThresh = 0.3f;
+    public const float DefaultBoxThresh = 0.5f;
 
-    /// <summary>det 输入长边上限：越大对高分辨率/小字发票检测越准，但推理越慢。</summary>
+    /// <summary>det 输入长边上限：越大对高分辨率/小字发票检测越准，但推理越慢。默认 1280（发票小字多）。</summary>
     public int DetLimit { get; init; } = DefaultDetLimit;
 
-    /// <summary>rec 输入最大宽：越大对超长文本行识别越准，但推理越慢。</summary>
+    /// <summary>rec 输入最大宽：越大对超长文本行识别越准，但推理越慢。默认 640（20 位发票号需要）。</summary>
     public int RecMaxW { get; init; } = DefaultRecMaxW;
+
+    /// <summary>DB 后处理二值化阈值（0~1，默认 0.3）。越低保留越多候选区域，误检增加；越高漏检增加。</summary>
+    public float DbThresh { get; init; } = DefaultDbThresh;
+
+    /// <summary>检测框最小像素占比阈值（0~1，默认 0.5）。越低对表格线/印章遮挡越容忍，框越碎；越高漏框越多。</summary>
+    public float BoxThresh { get; init; } = DefaultBoxThresh;
 
     /// <summary>推理执行提供方偏好。默认 Auto。</summary>
     public EpPreference Ep { get; init; } = EpPreference.Auto;
