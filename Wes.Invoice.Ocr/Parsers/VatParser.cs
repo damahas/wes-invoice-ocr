@@ -25,7 +25,7 @@ public sealed class VatParser : IInvoiceParser
         @"(?<!项目)(?<!货物)(?<!商品)(?<!服务)名\s*称\s*[:：]\s*([^\s，,；;]{2,60})",
         RegexOptions.Compiled);
     private static readonly Regex ReTaxNo = new(
-        @"(?:纳税人.{0,2}号|统一社会信用代码|纳税人识别\s*号)\s*[:：]?\s*([0-9A-Za-z.]{15,20})",
+        @"(?:纳税人.{0,2}号|统一社会信用代码|纳税人识别\s*号)\s*[:：]?\s*([0-9A-Za-z.,]{15,20})",
         RegexOptions.Compiled);
     private static readonly Regex ReAmountWithDecimals = new(
         @"([0-9][0-9,]*\.[0-9]{1,2})",
@@ -85,7 +85,7 @@ public sealed class VatParser : IInvoiceParser
         ParserHelpers.Push(fields, "seller_name", "销售方名称", names.Count > 1 ? names[1] : null);
 
         // 纳税人识别号（购/销各一个，按顺序）；清理 OCR 误识别的点号
-        var taxNos = ReTaxNo.Matches(text).Cast<Match>().Select(m => m.Groups[1].Value.Trim().Replace(".", "")).ToList();
+        var taxNos = ReTaxNo.Matches(text).Cast<Match>().Select(m => m.Groups[1].Value.Trim().Replace(",", "").Replace(".", "")).ToList();
         ParserHelpers.Push(fields, "buyer_tax_no", "购买方税号", taxNos.Count > 0 ? taxNos[0] : null);
         ParserHelpers.Push(fields, "seller_tax_no", "销售方税号", taxNos.Count > 1 ? taxNos[1] : null);
 
