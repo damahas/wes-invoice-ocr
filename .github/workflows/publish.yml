@@ -31,8 +31,12 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
+      # ONNX 模型经 Git LFS 管理（.gitattributes），需在检出时拉取 LFS 对象，
+      # 否则工作区里的 models/*.onnx 只是 130 字节的指针，打包/测试会失败。
       - name: 检出代码
         uses: actions/checkout@v4
+        with:
+          lfs: true
 
       # 格式非法时尽早失败，避免把错误版本号推到 NuGet（NuGet 同版本不可覆盖）
       - name: 校验 tag 格式

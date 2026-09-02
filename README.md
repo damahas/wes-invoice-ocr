@@ -28,7 +28,7 @@ dotnet add package Wes.Invoice.Ocr
 Install-Package Wes.Invoice.Ocr
 ```
 
-> **模型已随仓库提供**：仓库 `models/` 目录内含可直接运行的 ONNX 模型（约 25 MB），clone 后无需额外下载。
+> **模型已随仓库提供**：仓库 `models/` 目录内含可直接运行的 ONNX 模型（约 80 MB，经 **Git LFS** 管理，clone 时自动拉取），clone 后无需额外下载。
 > 但**模型不打进 NuGet 包**——NuGet 消费方请从本仓库 `models/` 取用，或自备模型目录，构造 `PaddleOcrEngine` 时传入路径。
 
 ## 快速开始
@@ -86,17 +86,17 @@ var invoice = svc.RecognizePdfBytes(File.ReadAllBytes("invoice.pdf"));
 
 ## 模型
 
-**已随仓库提交，开箱即用**。仓库 `models/` 目录内容：
+**已随仓库提交，开箱即用**（模型经 **Git LFS** 管理，clone 时自动拉取）。仓库 `models/` 目录内容：
 
 ```
 models/
-├─ det.onnx               # 必需：PP-OCRv4 det（动态 H/W，长边上限 960），4.53 MB
+├─ det.onnx               # 必需：PP-OCRv6 det medium（动态 H/W，长边上限 1280），59.2 MB
 ├─ rec.onnx               # 必需：PP-OCRv6 rec（动态宽，上限 640，内嵌字符集），20.25 MB
 ├─ cls.onnx               # 可选：方向分类，存在即启用，0.56 MB
 └─ ppocrv6_dict.txt       # 中文词典（rec.onnx 内嵌字符集时非必需），0.07 MB
 ```
 
-合计约 25 MB。`PaddleOcrEngine` 按上述固定文件名在 `modelDir` 下查找，`det.onnx` / `rec.onnx` 缺失时抛
+合计约 80 MB。`PaddleOcrEngine` 按上述固定文件名在 `modelDir` 下查找，`det.onnx` / `rec.onnx` 缺失时抛
 `OcrErrorKind.EngineNotConfigured`；`cls.onnx` 缺失则静默跳过方向分类。
 
 替换模型：保持文件名不变直接覆盖即可（无需改代码）。从 PaddleOCR 官方 inference model 用
@@ -179,7 +179,7 @@ dotnet list package --vulnerable --include-transitive
 ```
 wes-invoice-ocr/
 ├─ Wes.Invoice.slnx                # 解决方案（类库 + 测试）
-├─ models/                         # PaddleOCR ONNX 模型（已入库，约 25MB，开箱即用）
+├─ models/                         # PaddleOCR ONNX 模型（Git LFS 管理，约 80MB，开箱即用）
 ├─ Wes.Invoice.Ocr/                # 类库项目（netstandard2.0，可打包 NuGet）
 │  ├─ Wes.Invoice.Ocr.csproj
 │  ├─ Abstractions/                # 契约层：InvoiceKind / Invoice / FieldValue / OcrBox / IOcrEngine / 错误体系

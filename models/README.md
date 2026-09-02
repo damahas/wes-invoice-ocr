@@ -8,9 +8,8 @@ PaddleOCR 的 ONNX 模型**已随仓库提交**，clone 后无需额外下载即
 | `rec.onnx` | 20.25 MB | 必需 | 文本识别（PP-OCRv6 rec，动态宽，上限 640；内嵌字符集） |
 | `cls.onnx` | 0.56 MB | 可选 | 方向分类（存在时自动启用） |
 | `ppocrv6_dict.txt` | 0.07 MB | 条件必需 | 中文词典；`rec.onnx` 内嵌字符集时非必需，此处作为兜底保留 |
-| `det_v4_backup.onnx` | 4.53 MB | 否 | 升级前的 PP-OCRv4 det 备份，确认无问题后可删除 |
 
-合计约 **80.2 MB**（不含备份 4.5 MB）。
+合计约 **80 MB**，全部经 **Git LFS** 管理（见 `.gitattributes`）。
 
 ## 引擎的加载规则
 
