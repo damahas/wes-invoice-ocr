@@ -25,7 +25,7 @@ public sealed class VatParser : IInvoiceParser
         @"(?<!项目)(?<!货物)(?<!商品)(?<!服务)名\s*称\s*[:：]\s*([^\s，,；;]{2,60})",
         RegexOptions.Compiled);
     private static readonly Regex ReTaxNo = new(
-        @"(?:纳税人识别号|统一社会信用代码|纳税人识别\s*号)\s*[:：]?\s*([0-9A-Za-z]{15,20})",
+        @"(?:纳税人.{0,2}号|统一社会信用代码|纳税人识别\s*号)\s*[:：]?\s*([0-9A-Za-z.]{15,20})",
         RegexOptions.Compiled);
     private static readonly Regex ReAmountWithDecimals = new(
         @"([0-9][0-9,]*\.[0-9]{1,2})",
@@ -33,12 +33,16 @@ public sealed class VatParser : IInvoiceParser
     private static readonly Regex ReTotal = new(
         @"(?:价\s*税)?合\s*计\s*(?:金\s*额)?\s*[:：]?\s*[¥￥]?\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)",
         RegexOptions.Compiled);
+    /// <summary>通行费发票等版式中"名"与"称"被拆成两个检测框时的备选。</summary>
+    private static readonly Regex ReNameAlt = new(
+        @"(?:^|\n)\s*称\s*[:：]\s*([^\s，,；;]{2,60})(?:\n|$)",
+        RegexOptions.Compiled);
     private static readonly Regex ReTax = new(
         @"税\s*额\s*[:：]?\s*[¥￥]?\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)",
         RegexOptions.Compiled);
     /// <summary>中文大写金额：如"叁佰圆整"（300.00）、"壹万贰仟叁佰肆拾伍元陆角柒分"（12345.67）。</summary>
     private static readonly Regex ReCnAmount = new(
-        @"(?<int>[零壹贰叁肆伍陆柒捌玖一二三四五六七八九十百千万亿拾佰仟]*)(?:圆|元)" +
+        @"(?<int>[零壹贰叁肆伍陆柒捌玖一二三四五六七八九十百千万亿拾佰仟]+)(?:圆|元)" +
         @"(?:整|(?:(?<jiao>[零壹贰叁肆伍陆柒捌玖一二三四五六七八九])\s*角)?" +
         @"(?:(?<fen>[零壹贰叁肆伍陆柒捌玖一二三四五六七八九])\s*分)?)",
         RegexOptions.Compiled);
@@ -67,13 +71,21 @@ public sealed class VatParser : IInvoiceParser
         if (dm.Success)
             ParserHelpers.Push(fields, "invoice_date", "开票日期", $"{dm.Groups[1].Value}年{dm.Groups[2].Value}月{dm.Groups[3].Value}日");
 
-        // 购方 / 销方名称：按出现顺序取前两个
+        // 购方 / 销方名称：按出现顺序取前两个；ReName 失败时回退 ReNameAlt（通行费发票名/称拆框）
         var names = ReName.Matches(text).Cast<Match>().Select(m => m.Groups[1].Value.Trim()).ToList();
+        if (names.Count < 2)
+        {
+            foreach (var m in ReNameAlt.Matches(text).Cast<Match>().Select(m => m.Groups[1].Value.Trim()))
+            {
+                if (!names.Contains(m))
+                    names.Add(m);
+            }
+        }
         ParserHelpers.Push(fields, "buyer_name", "购买方名称", names.Count > 0 ? names[0] : null);
         ParserHelpers.Push(fields, "seller_name", "销售方名称", names.Count > 1 ? names[1] : null);
 
-        // 纳税人识别号（购/销各一个，按顺序）
-        var taxNos = ReTaxNo.Matches(text).Cast<Match>().Select(m => m.Groups[1].Value.Trim()).ToList();
+        // 纳税人识别号（购/销各一个，按顺序）；清理 OCR 误识别的点号
+        var taxNos = ReTaxNo.Matches(text).Cast<Match>().Select(m => m.Groups[1].Value.Trim().Replace(".", "")).ToList();
         ParserHelpers.Push(fields, "buyer_tax_no", "购买方税号", taxNos.Count > 0 ? taxNos[0] : null);
         ParserHelpers.Push(fields, "seller_tax_no", "销售方税号", taxNos.Count > 1 ? taxNos[1] : null);
 
