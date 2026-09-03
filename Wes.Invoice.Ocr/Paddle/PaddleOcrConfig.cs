@@ -39,7 +39,12 @@ public sealed record PaddleOcrConfig
     /// <summary>推理执行提供方偏好。默认 Auto。</summary>
     public EpPreference Ep { get; init; } = EpPreference.Auto;
 
-    /// <summary>rec 会话池大小（1~16，默认 4）：CPU+SVTR 模型多会话并行识别可数倍提速。</summary>
+    /// <summary>
+    /// rec 会话池大小（1~16，默认 4）。**仅在批量模式（<see cref="RecBatch"/> 为 true
+    /// 且模型 batch 维度动态）下生效**：批量时多个会话并行处理宽度分桶，每会话按核数分摊线程。
+    /// 非批量模式（默认）只建 1 个会话并独占全部核心——非批量路径只用池中的第一个会话，
+    /// 多建纯属浪费内存（rec 模型越大越明显）。
+    /// </summary>
     public int RecThreads { get; init; } = 4;
 
     /// <summary>

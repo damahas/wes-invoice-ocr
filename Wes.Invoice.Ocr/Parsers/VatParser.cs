@@ -24,8 +24,10 @@ public sealed class VatParser : IInvoiceParser
     private static readonly Regex ReName = new(
         @"(?<!项目)(?<!货物)(?<!商品)(?<!服务)名\s*称\s*[:：]\s*([^\s，,；;]{2,60})",
         RegexOptions.Compiled);
+    /// <summary>纳税人识别号：容忍 rec 把票面竖线/分隔噪声（/, |, 丨, -, ·, \）混入数字串，
+    /// 噪声会劈断 18 位连续匹配导致整行失配（实测 "/" 致销售方税号丢失）；捕获后统一清洗。</summary>
     private static readonly Regex ReTaxNo = new(
-        @"(?:纳税人.{0,2}号|统一社会信用代码|纳税人识别\s*号)\s*[:：]?\s*([0-9A-Za-z.,]{15,20})",
+        @"(?:纳税人.{0,2}号|统一社会信用代码|纳税人识别\s*号)\s*[:：]?\s*([0-9A-Za-z.,/\\|丨·\-]{15,24})",
         RegexOptions.Compiled);
     private static readonly Regex ReAmountWithDecimals = new(
         @"([0-9][0-9,]*\.[0-9]{1,2})",
@@ -84,8 +86,11 @@ public sealed class VatParser : IInvoiceParser
         ParserHelpers.Push(fields, "buyer_name", "购买方名称", names.Count > 0 ? names[0] : null);
         ParserHelpers.Push(fields, "seller_name", "销售方名称", names.Count > 1 ? names[1] : null);
 
-        // 纳税人识别号（购/销各一个，按顺序）；清理 OCR 误识别的点号
-        var taxNos = ReTaxNo.Matches(text).Cast<Match>().Select(m => m.Groups[1].Value.Trim().Replace(",", "").Replace(".", "")).ToList();
+        // 纳税人识别号（购/销各一个，按顺序）
+        var taxNos = ReTaxNo.Matches(text).Cast<Match>()
+            .Select(m => CleanTaxNo(m.Groups[1].Value))
+            .Where(v => v.Length >= 15)
+            .ToList();
         ParserHelpers.Push(fields, "buyer_tax_no", "购买方税号", taxNos.Count > 0 ? taxNos[0] : null);
         ParserHelpers.Push(fields, "seller_tax_no", "销售方税号", taxNos.Count > 1 ? taxNos[1] : null);
 
@@ -94,6 +99,19 @@ public sealed class VatParser : IInvoiceParser
         ParserHelpers.Push(fields, "total_amount_with_tax", "价税合计", TotalAmountWithTax(text));
 
         return fields;
+    }
+
+    /// <summary>税号清洗：去 rec 噪声分隔符 + 大写归一 + GB32100 易混字符纠正
+    /// （统一社会信用代码字符集不含 I/O，OCR 常把 1/0 误读为大写 I/O）。</summary>
+    private static string CleanTaxNo(string raw)
+    {
+        var v = raw
+            .Replace(",", "").Replace(".", "")
+            .Replace("/", "").Replace("\\", "")
+            .Replace("|", "").Replace("丨", "")
+            .Replace("-", "").Replace("·", "")
+            .Trim();
+        return v.ToUpperInvariant().Replace('I', '1').Replace('O', '0');
     }
 
     /// <summary>价税合计：取"小写"后一小段内第一个带两位小数的金额（"小写"容忍拆字）；

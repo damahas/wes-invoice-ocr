@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+ <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -13,16 +13,17 @@
     <ProjectReference Include="..\Wes.Invoice.Ocr\Wes.Invoice.Ocr.csproj" />
   </ItemGroup>
 
-  <!-- 测试图片目录：随构建复制到输出目录，冒烟从“运行目录/Assets/”读取，避免硬编码绝对路径 -->
+  <!-- 测试图片目录：随构建复制到输出目录，冒烟从"运行目录/Assets/"读取，避免硬编码绝对路径 -->
   <ItemGroup>
     <None Include="Assets\**" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
-  <!-- 真实模型：随构建从仓库根 models/ 复制到“运行目录/models/”，冒烟缺省模型目录时直接使用。
-       模型已随 git 仓库提交（约 25MB），clone 后无需额外下载即可跑通冒烟 -->
+  <!-- 真实模型：随构建从仓库根 models/ppocrv6/small/ 复制到"运行目录/models/"，冒烟缺省模型目录时直接使用。
+       默认档位 small（轻量快速）；高精度档 medium 位于 models/ppocrv6/medium/，需时显式传该目录。
+       模型已随 git 仓库提交（Git LFS），clone 后无需额外下载即可跑通冒烟 -->
   <ItemGroup>
-    <None Include="..\models\*.onnx" Link="models\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
-    <None Include="..\models\*.txt" Link="models\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\models\ppocrv6\small\*.onnx" Link="models\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\models\ppocrv6\small\*.txt" Link="models\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
   <ItemGroup>
     <None Update="Assets\invoice1.png">

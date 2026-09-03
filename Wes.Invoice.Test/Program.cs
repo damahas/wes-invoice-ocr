@@ -22,6 +22,7 @@ var tests = new (string Name, Action Run)[]
     ("ParseVatDateWithSpaces", TestCases.ParseVatDateWithSpaces),
     ("ParseVatTotalSplitLines", TestCases.ParseVatTotalSplitLines),
     ("ParseVatCnAmount", TestCases.ParseVatCnAmount),
+    ("ParseVatTaxNoCleanup", TestCases.ParseVatTaxNoCleanup),
     ("RecognizeImageInputs", TestCases.RecognizeImageInputs),
     ("ParseTextEmptyThrows", TestCases.ParseTextEmptyThrows),
     ("ParserRegistryDefault", TestCases.ParserRegistryDefault),

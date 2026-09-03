@@ -28,8 +28,8 @@ dotnet add package Wes.Invoice.Ocr
 Install-Package Wes.Invoice.Ocr
 ```
 
-> **模型已随仓库提供**：仓库 `models/` 目录内含可直接运行的 ONNX 模型（约 80 MB，经 **Git LFS** 管理，clone 时自动拉取），clone 后无需额外下载。
-> 但**模型不打进 NuGet 包**——NuGet 消费方请从本仓库 `models/` 取用，或自备模型目录，构造 `PaddleOcrEngine` 时传入路径。
+> **模型已随仓库提供**（Git LFS，clone 即用）：`models/` 下 PP-OCRv6 家族 `small`（默认）/ `medium` 两档 + PP-OCRv4 家族 `mobile` 快速档。
+> 模型**不打进 NuGet 包**——消费方请从本仓库取用，或在构造 `PaddleOcrEngine` 时传入自备模型目录。
 
 ## 快速开始
 
@@ -42,9 +42,10 @@ using Wes.Invoice.Ocr.Paddle;
 using Wes.Invoice.Ocr.Qr;
 
 // 1. 构造 OCR 引擎（指向包含 det.onnx / rec.onnx / cls.onnx / 字典 的模型目录）
+//    models/ 下档位：ppocrv6/{small|medium}（PP-OCRv6 家族）+ ppocrv4/mobile（快速档）
 //    引擎持有非托管推理会话，必须 Dispose（或 using）
 using var engine = new PaddleOcrEngine(
-    @"models",
+    @"models/ppocrv6/small",
     new PaddleOcrConfig { Ep = EpPreference.Cpu });
 
 // 2. 构造门面（可选传入二维码解码器，启用交叉校验）
@@ -86,21 +87,38 @@ var invoice = svc.RecognizePdfBytes(File.ReadAllBytes("invoice.pdf"));
 
 ## 模型
 
-**已随仓库提交，开箱即用**（模型经 **Git LFS** 管理，clone 时自动拉取）。仓库 `models/` 目录内容：
+**随仓库提交（Git LFS），clone 即用**。`models/` 按「家族 / 档位」归档，每档为**自包含完整模型集**
+（`det.onnx` / `rec.onnx` / `cls.onnx`，v6 档另附兜底词典），引擎指向哪档即用哪档：
 
 ```
 models/
-├─ det.onnx               # 必需：PP-OCRv6 det medium（动态 H/W，长边上限 1280），59.2 MB
-├─ rec.onnx               # 必需：PP-OCRv6 rec（动态宽，上限 640，内嵌字符集），20.25 MB
-├─ cls.onnx               # 可选：方向分类，存在即启用，0.56 MB
-└─ ppocrv6_dict.txt       # 中文词典（rec.onnx 内嵌字符集时非必需），0.07 MB
+├─ ppocrv6/                  PP-OCRv6（RapidOCR v3.9.0）：small 轻量（默认）| medium 高精度
+└─ ppocrv4/                  PP-OCRv4（RapidOCR 官方）：mobile 快速
 ```
 
-合计约 80 MB。`PaddleOcrEngine` 按上述固定文件名在 `modelDir` 下查找，`det.onnx` / `rec.onnx` 缺失时抛
-`OcrErrorKind.EngineNotConfigured`；`cls.onnx` 缺失则静默跳过方向分类。
+实测（1080×704 通行费发票，4 核 CPU，CPU EP）：
 
-替换模型：保持文件名不变直接覆盖即可（无需改代码）。从 PaddleOCR 官方 inference model 用
-[paddle2onnx](https://github.com/PaddlePaddle/Paddle2ONNX) 转换，详见 [`models/README.md`](models/README.md)。
+| 档位 | det | rec | 端到端 | 体积 | 结论 |
+|------|-----|-----|--------|------|------|
+| `mobile` | PP-OCRv4 det mobile | PP-OCRv4 rec mobile | 约 3.6 s/张 | 约 15 MB | 税号字符最准 + 最快，适合简单版式 |
+| `small`（默认） | det medium | rec small | 约 9 s/张 | 约 80 MB | 通用；名称准但税号可能丢字符 |
+| `medium` | det medium | rec medium | 约 33 s/张 | 约 133 MB | 全字段最准 |
+
+> **怎么选**：全字段准确用 `medium`；复杂版式通用用 `small`；简单版式提速用 `mobile`。
+> **坑**：`mobile` 的 det 较弱（仅 4.5 MB），复杂版式可能漏检整行导致字段错位——**不报错、看起来正常但值是错的**，
+> 比乱码更危险，故默认档取 `small`。
+> 表中为稳态耗时，首张含模型加载约 +10 s；GPU（CUDA）下各档均秒级、差距缩小。
+
+`PaddleOcrEngine` 在传入目录按固定文件名查找模型；`det.onnx` / `rec.onnx` 缺失抛
+`OcrErrorKind.EngineNotConfigured`，`cls.onnx` 缺失则静默跳过方向分类：
+
+```csharp
+using var mobile  = new PaddleOcrEngine("models/ppocrv4/mobile", cfg);  // 快速（PP-OCRv4）
+using var fast    = new PaddleOcrEngine("models/ppocrv6/small", cfg);   // 轻量（默认）
+using var precise = new PaddleOcrEngine("models/ppocrv6/medium", cfg);  // 高精度
+```
+
+替换 / 升级：保持文件名不变直接覆盖即可（无需改代码），官方来源与下载命令见 [`models/README.md`](models/README.md)。
 
 > **NuGet 消费方注意**：模型**不在** NuGet 包内（体积大且随模型迭代变化），请从本仓库 `models/` 取用或自备目录。
 
@@ -152,7 +170,9 @@ dotnet run --project Wes.Invoice.Test -- smoke invoice.png --det-limit 1600 --re
 # 解析器 / 类型判定单元测试（零依赖，退出码 0/1 可入 CI）
 dotnet run --project Wes.Invoice.Test
 
-# 端到端冒烟（图片省略时默认取 Assets/test_invoice.png，模型目录省略时默认取运行目录下 models/；--debug 打印 det 的 shape 与概率统计）
+# 端到端冒烟（图片省略时默认取 Assets/test_invoice.png；模型目录省略时默认取运行目录下 models/，
+#   即构建自动复制的 small 档；可显式传档位目录切档：models/ppocrv6/{small|medium}、models/ppocrv4/mobile；
+#   --debug 打印 det 的 shape 与概率统计）
 dotnet run --project Wes.Invoice.Test -- smoke [图片路径] [模型目录] [--debug]
 
 # 全量构建
@@ -179,7 +199,9 @@ dotnet list package --vulnerable --include-transitive
 ```
 wes-invoice-ocr/
 ├─ Wes.Invoice.slnx                # 解决方案（类库 + 测试）
-├─ models/                         # PaddleOCR ONNX 模型（Git LFS 管理，约 80MB，开箱即用）
+├─ models/                         # PaddleOCR ONNX 模型仓库（Git LFS 管理，开箱即用）
+│  ├─ ppocrv6/                     #   PP-OCRv6 家族：small（默认）/ medium（高精度）
+│  └─ ppocrv4/                     #   PP-OCRv4 家族：mobile（快速档）
 ├─ Wes.Invoice.Ocr/                # 类库项目（netstandard2.0，可打包 NuGet）
 │  ├─ Wes.Invoice.Ocr.csproj
 │  ├─ Abstractions/                # 契约层：InvoiceKind / Invoice / FieldValue / OcrBox / IOcrEngine / 错误体系

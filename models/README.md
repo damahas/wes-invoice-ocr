@@ -1,83 +1,64 @@
 # 模型目录
 
-PaddleOCR 的 ONNX 模型**已随仓库提交**，clone 后无需额外下载即可运行。
+PaddleOCR ONNX 模型**随仓库提交**（Git LFS 管理），clone 即用、无需下载。
 
-| 文件 | 体积 | 必需 | 说明 |
-|------|------|------|------|
-| `det.onnx` | 59.24 MB | 必需 | 文本检测（PP-OCRv6 det medium，动态 H/W，长边上限 1280） |
-| `rec.onnx` | 76.63 MB | 必需 | 文本识别（PP-OCRv6 rec **medium**，动态宽，上限 640；内嵌字符集） |
-| `cls.onnx` | 0.56 MB | 可选 | 方向分类（存在时自动启用） |
-| `ppocrv6_dict.txt` | 0.07 MB | 条件必需 | 中文词典；`rec.onnx` 内嵌字符集时非必需，此处作为兜底保留 |
+## 档位与选型
 
-合计约 **136 MB**，全部经 **Git LFS** 管理（见 `.gitattributes`）。
+`models/` 按「家族 / 档位」归档，每档为**自包含完整模型集**（含 `det.onnx` / `rec.onnx` / `cls.onnx`，
+v6 档另附 `ppocrv6_dict.txt` 兜底词典）。引擎按固定文件名加载，**指向哪档即用哪档**：
 
-> rec 由 v6 **small**（20 MB）升级为 **medium**：税号等小字符识别显著更准
-> （实测修复了通行费发票税号 `JL` 丢失、尾位 `H` 截断等 OCR 错误）。
-> 代价是纯 CPU 推理约慢 4 倍（8.4s → 33.3s）；装 CUDA 13 + cuDNN 9 后
-> 引擎自动切 GPU EP，耗时可降到秒级。
+```
+models/
+├─ ppocrv6/                  PP-OCRv6 家族（RapidOCR v3.9.0 官方 ONNX）
+│  ├─ small/                 轻量档（默认）：det medium(59.2M) + rec small
+│  └─ medium/                高精度档：det medium + rec medium(73.1M)
+└─ ppocrv4/                  PP-OCRv4 家族（RapidOCR 官方 ONNX，官方分 mobile/server）
+   └─ mobile/                快速档：det mobile(4.5M) + rec mobile(10.4M)
+```
 
-## 引擎的加载规则
+实测（1080×704 通行费发票，4 核 CPU，CPU EP）：
 
-`PaddleOcrEngine(modelDir)` 按固定文件名在本目录中查找（`PaddleOcrEngine.cs`）：
+| 档位 | det | rec | 端到端 | 体积 | 结论 |
+|------|-----|-----|--------|------|------|
+| `mobile` | PP-OCRv4 det mobile | PP-OCRv4 rec mobile | 约 3.6 s/张 | 约 15 MB | 税号字符最准（读出 `JLK6N`）+ 最快，适合简单版式 |
+| `small`（默认） | det medium | rec small | 约 9 s/张 | 约 80 MB | 通用；名称准但税号可能丢字符 |
+| `medium` | det medium | rec medium | 约 33 s/张 | 约 133 MB | 全字段最准 |
 
-- `det.onnx` 与 `rec.onnx` **必须存在**，否则抛 `OcrException { Kind = EngineNotConfigured }`
-- `cls.onnx` 存在即启用方向分类，不存在则跳过（不报错）
-- 词典优先取 `rec.onnx` 内嵌的 `character` metadata，取不到才回退 `ppocrv6_dict.txt`；两者都没有同样抛 `EngineNotConfigured`
+> **怎么选（结论）**：全字段准确用 `medium`；复杂版式通用用 `small`；追求速度且票面简单（通行费/普票）用 `mobile`。
+> **坑**：`mobile` 的 det 较弱（仅 4.5 MB），复杂版式可能漏检整行导致字段错位——**不报错、看起来正常但值是错的**，比乱码更危险，故默认档取 `small`。若票面版式与样本差异大，先跑冒烟实测通过率再定档。
+> `mobile` 的 rec 会把 `1` 读成 `I`、混入 `/` 等噪声——已由 `VatParser.CleanTaxNo`（噪声分隔容忍 + GB32100 `I→1`/`O→0` 纠正）兜底，各档通用。
+> 表中为稳态耗时，首张含模型加载约 +10 s；GPU（CUDA）下各档均秒级、差距缩小。
 
 ## 使用
 
-模型路径传相对路径即可，**无硬编码绝对路径**：
-
-```bash
-# 冒烟（模型目录省略时默认取运行目录下 models/，构建时自动复制）
-dotnet run --project Wes.Invoice.Test -- smoke
-```
-
-代码中：
-
 ```csharp
-using var engine = new PaddleOcrEngine("models", new PaddleOcrConfig { Ep = EpPreference.Cpu });
+using var mobile  = new PaddleOcrEngine("models/ppocrv4/mobile", cfg);  // 快速（PP-OCRv4）
+using var fast    = new PaddleOcrEngine("models/ppocrv6/small", cfg);   // 轻量（默认）
+using var precise = new PaddleOcrEngine("models/ppocrv6/medium", cfg);  // 高精度
 ```
 
-## 替换 / 升级模型
+- `det.onnx` / `rec.onnx` 缺失抛 `OcrException { Kind = EngineNotConfigured }`；`cls.onnx` 缺失则跳过方向分类
+- 词典优先取 `rec.onnx` 内嵌的 character metadata，取不到才回退 `ppocrv6_dict.txt`（mobile 档内嵌，无 dict 亦可）
+- 冒烟缺省模型目录时，构建自动把 `models/ppocrv6/small/` 复制到运行目录 `models/`（见 `Wes.Invoice.Test.csproj`）
 
-保持文件名不变直接覆盖即可，无需改代码。本仓库 det/rec 均来自 RapidOCR 官方发布的 PP-OCRv6 ONNX
-（ModelScope `RapidAI/RapidOCR` v3.9.0），可直接下载覆盖：
+## 替换 / 升级
+
+保持文件名不变直接覆盖即可，无需改代码。官方来源：ModelScope `RapidAI/RapidOCR`（v6 为 v3.9.0 分支，v4 为 master 分支）：
 
 ```powershell
-# det（medium）
-curl -L -o det.onnx "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.9.0/onnx/PP-OCRv6/det/PP-OCRv6_det_medium.onnx"
-# rec（medium）
-curl -L -o rec.onnx "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.9.0/onnx/PP-OCRv6/rec/PP-OCRv6_rec_medium.onnx"
+# PP-OCRv6（small / medium 档）
+curl.exe -L -o small/det.onnx  "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.9.0/onnx/PP-OCRv6/det/PP-OCRv6_det_medium.onnx"
+curl.exe -L -o small/rec.onnx  "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.9.0/onnx/PP-OCRv6/rec/PP-OCRv6_rec_small.onnx"
+curl.exe -L -o medium/rec.onnx "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.9.0/onnx/PP-OCRv6/rec/PP-OCRv6_rec_medium.onnx"
+# PP-OCRv4 mobile（ppocrv4/mobile 档）
+curl.exe -L -o ppocrv4/mobile/det.onnx "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/master/onnx/PP-OCRv4/det/ch_PP-OCRv4_det_mobile.onnx"
+curl.exe -L -o ppocrv4/mobile/rec.onnx "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/master/onnx/PP-OCRv4/rec/ch_PP-OCRv4_rec_mobile.onnx"
+curl.exe -L -o ppocrv4/mobile/cls.onnx "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/master/onnx/PP-OCRv4/cls/ch_ppocr_mobile_v2.0_cls_mobile.onnx"
 ```
 
-SHA256 校验（RapidOCR default_models.yaml 官方值）：
+`cls.onnx` / 词典极小且少迭代，需更新时从 RapidOCR 官方 `default_models.yaml` 取。
 
-| 文件 | SHA256 |
-|------|--------|
-| `PP-OCRv6_det_medium.onnx` | `92078b7355007ccfffcd4c8cd441a3afd4538904d06881b29a155e1e679907c2` |
-| `PP-OCRv6_rec_medium.onnx` | `eef444829dbbe18d7fea59a3f6eb75647518d2b3a9568d27c92e42940204894b` |
+换模型后跑冒烟对照：`dotnet run --project Wes.Invoice.Test -- smoke <图片路径> [模型目录]`。
 
-也可从 PaddleOCR 官方 inference model（`*.pdmodel` + `*.pdiparams`）用
-[paddle2onnx](https://github.com/PaddlePaddle/Paddle2ONNX) 自行转换：
-
-```bash
-paddle2onnx --model_dir ./ch_PP-OCRv4_det_infer \
-            --model_filename inference.pdmodel \
-            --params_filename inference.pdiparams \
-            --save_file det.onnx --opset_version 11
-```
-
-换模型后建议跑一遍冒烟对照识别效果：
-
-```bash
-dotnet run --project Wes.Invoice.Test -- smoke <图片路径> [模型目录]
-```
-
-注意 `PaddleOcrConfig.DetLimit`（默认 1280）与 `RecMaxW`（默认 640）是按当前模型的输入上限设的，换成上限不同的模型时需同步调整。
-
-## 体积与仓库
-
-模型已入库（约 136 MB），换来的是**开箱即用**：无需注册账号、无需外网、CI 与离线环境都能直接跑。代价是 clone 体积变大、模型迭代会体现在 git 历史中。
-
-若日后模型体积增长到影响 clone 体验，可改用 Git LFS 或改回「不入库 + 首次运行下载」的方案。
+注意：`PaddleOcrConfig.DetLimit`（默认 1280）与 `RecMaxW`（默认 640）按当前模型的输入上限设定，
+换成上限不同的模型时需同步调整。

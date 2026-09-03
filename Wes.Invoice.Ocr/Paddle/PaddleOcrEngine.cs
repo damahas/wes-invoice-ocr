@@ -84,15 +84,29 @@ public sealed class PaddleOcrEngine : IOcrEngine, IDisposable
         _dbThresh = cfg.DbThresh;
         _boxThresh = cfg.BoxThresh;
 
-        // 会话线程配置：rec 会话池 N 个 × 每会话 intra 线程 = max(1, 核数/N)
         var recThreads = Math.Max(Math.Min(cfg.RecThreads, 16), 1);
         var cores = Math.Max(Environment.ProcessorCount, 1);
-        var perSession = Math.Max(cores / recThreads, 1);
 
-        _det = OnnxSessionFactory.Load(detPath, perSession, cfg.Ep);
-        _recPool = Enumerable.Range(0, recThreads)
-            .Select(_ => OnnxSessionFactory.Load(recPath, perSession, cfg.Ep))
+        // det 与 rec 严格串行（全部框检测完才进入识别），不存在并行争抢，
+        // 故 det 可独占全部核心。原实现按 cores/recThreads 分配，4 核机上 det 被压到 1 线程。
+        _det = OnnxSessionFactory.Load(detPath, cores, cfg.Ep);
+
+        // rec 会话池大小取决于是否真的走批量：非批量路径（RecBatch=false，默认）只用
+        // _recPool[0]，多建的会话永不访问，纯属浪费内存（medium 档 rec 73 MB，
+        // 4 会话即 292 MB，其中约 219 MB 是浪费）。是否支持批量需建会话后才能探测，
+        // 故用临时会话探测（1 线程，仅读 metadata，不推理）后销毁，再按需建池。
+        using (var probe = OnnxSessionFactory.Load(recPath, 1, cfg.Ep))
+            _recBatch = OnnxSessionFactory.InputBatchDynamic(probe);
+        _useBatch = _recBatch && cfg.RecBatch;
+
+        // 批量：recThreads 个会话并行，每会话按核数分摊避免线程超订；
+        // 非批量：单会话即可，独占全部核心
+        int recCount = _useBatch ? recThreads : 1;
+        int recIntra = _useBatch ? Math.Max(cores / recThreads, 1) : cores;
+        _recPool = Enumerable.Range(0, recCount)
+            .Select(_ => OnnxSessionFactory.Load(recPath, recIntra, cfg.Ep))
             .ToList();
+
         _clsPool = File.Exists(clsPath)
             ? Enumerable.Range(0, Math.Min(recThreads, 4))
                 .Select(_ => OnnxSessionFactory.Load(clsPath, 1, cfg.Ep))
@@ -115,7 +129,6 @@ public sealed class PaddleOcrEngine : IOcrEngine, IDisposable
         var (clsH, clsW) = _clsPool.Count > 0 ? OnnxSessionFactory.InputHw(_clsPool[0]) : (DefaultClsH, DefaultClsW);
         _detDynamic = detH is null || detW is null;
         _recDynamicW = recW is null;
-        _recBatch = OnnxSessionFactory.InputBatchDynamic(_recPool[0]);
         _detH = detH ?? 0;
         _detW = detW ?? 0;
         _detLimit = cfg.DetLimit;
@@ -124,9 +137,6 @@ public sealed class PaddleOcrEngine : IOcrEngine, IDisposable
         _recMaxW = cfg.RecMaxW;
         _clsH = clsH ?? DefaultClsH;
         _clsW = clsW ?? DefaultClsW;
-
-        // 批量还需模型支持（batch 维度动态），静态 batch 模型即使配置了也不会启用
-        _useBatch = _recBatch && cfg.RecBatch;
 
         _detInput = _det.InputMetadata.Keys.First();
         _recInput = _recPool[0].InputMetadata.Keys.First();

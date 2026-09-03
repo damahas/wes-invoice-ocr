@@ -411,6 +411,27 @@ internal static class TestCases
         Equal("100.00", get("total_amount_with_tax"), "total_amount_with_tax");
     }
 
+    public static void ParseVatTaxNoCleanup()
+    {
+        // rec 把票面竖线/边框噪声（|丨/）混入税号："/" 曾劈断 18 位连续匹配致销售方税号整行丢失；
+        // 同时模拟 I→1 误读（GB32100 统一社会信用代码不含 I）。清洗后应恢复。
+        var svc = NewService();
+        const string text = """
+            发票号码：12345678
+            开票日期：2024年05月20日
+            名称：苏州峰之鼎信息科技有限公司
+            统一社会信用代码/纳税人识别号：91320594MAINGJLK6N
+            名称：中国石化销售股份有限公司江苏南通海安石油分公司
+            统一社会信用代码/纳税人识别号：913206277205/8812H
+            价税合计（小写）¥100.00
+            """;
+        var inv = svc.ParseText(text);
+        Equal(InvoiceKind.VatInvoice, inv.Kind, "kind");
+        var get = Field(inv);
+        Equal("91320594MA1NGJLK6N", get("buyer_tax_no"), "buyer_tax_no I->1");
+        Equal("9132062772058812H", get("seller_tax_no"), "seller_tax_no 噪声分隔");
+    }
+
     public static void RecognizeImageInputs()
     {
         // 最小合法 PNG（1x1 白像素），仅验证流水线输入通道，不涉及真实解码质量
